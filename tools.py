@@ -8,28 +8,28 @@ import cv2
 import re
 import pdfplumber
 
-def extract_shotbyshot(doc, page, model, is_MD = False) -> tuple[np.ndarray, list[tuple[str, str, str, str, int]]]:
+def extract_shotbyshot(page, doc, pn, model, is_MD = False) -> tuple[np.ndarray, list[tuple[str, str, str, str, int]]]:
     """
         ページからショットバイショット画像を抽出するメソッド
         Args:
-            doc : PyMuPDFのドキュメントオブジェクト
-            page : PyMuPDFのページオブジェクト
+            page : pdfplumberのページオブジェクト
+            doc : PyMuPDFのオブジェクト
+            pn : ページ番号
             model : ストーン検出モデル
             is_MD : MDかどうか
         Returns:
             tuple[np.ndarray, list[tuple[str, str, str, str, int]]] : 
                 ストーン座標の配列（num_shots x 16 x 6）とショット情報のリスト
     """
-    #page = doc[page_number - 1]
-    text = page.get_text()
+    text = page.extract_text()
     text = text.splitlines()
     #print(text)
     shot_info_list = __get_shot_info(text, is_MD=is_MD)
 
-    #pdf_name = os.path.splitext(os.path.basename(pdf_path))[0]
-
+    #========================画像取得===========================
+    page_img = doc[pn]
     # ページ内の全画像情報を取得（整数の XREF）
-    img_list = page.get_images(full=True)
+    img_list = page_img.get_images(full=True)
     #print(img_list)
 
     tmp_shotbyshot_list = []
@@ -44,7 +44,7 @@ def extract_shotbyshot(doc, page, model, is_MD = False) -> tuple[np.ndarray, lis
     # ページ内の画像情報を取得
     for img in tmp_shotbyshot_list:
         # 画像のページ上の座標を取得
-        bbox = page.get_image_bbox(img)
+        bbox = page_img.get_image_bbox(img)
         x0, y0, x1, y1 = bbox  # 左上(x0,y0)と右下(x1,y1)
         
         #print(f"bbox={bbox}, x0={x0}, y0={y0}, x1={x1}, y1={y1}")
@@ -59,7 +59,7 @@ def extract_shotbyshot(doc, page, model, is_MD = False) -> tuple[np.ndarray, lis
     shotbyshot_list.sort(key=lambda im: (im["y"], im["x"]))
 
     stones_end_list = []
-    for i,img in enumerate(shotbyshot_list):
+    for img in shotbyshot_list:
         xref = img["item"][0]
         pix = fitz.Pixmap(doc, xref)
 
@@ -84,28 +84,29 @@ def extract_game_result(page) -> pd.DataFrame:
     """
         ページからゲーム結果のスコア表を抽出するメソッド
         Args:
-            page : PyMuPDFのページオブジェクト
+            page : pdfplumberのページオブジェクト
         Returns:
             pd.DataFrame : スコア表データフレーム
     """
-    text = page.get_text()
-    team_texts = [t for t in text.splitlines() if re.search(r"[A-Z]{3} - ", t)]
-    #print(team_texts)
+    text = page.extract_text()
+    team_texts = re.findall(r'\b[A-Z]{3} - [A-Za-z]+\b', text)
+    #team_texts = [t for t in text.splitlines() if re.search(r"[A-Z]{3} - ", t)]
+    print(team_texts)
     team_red = team_texts[0]
     team_yellow = team_texts[1]
-    tabs = page.find_tables(
-        #snap_tolerance=6,
-    )
+    tabs = page.find_tables()
     
     # 得点表のテーブルを取得
     for table in tabs:
-        df = table.to_pandas()
-
-        if "LSFE" in df.columns:
+        table = table.extract()
+        if any('*' in row for row in table):
             break
-            #pass
 
+    n_cols = len(table[0])
+    columns = ["LSFE"] + [str(i) for i in range(1, n_cols-1)] + ["Total"]
+    df = pd.DataFrame([[__try_int(cell) for cell in row] for row in table], columns=columns)
     df.insert(0, "team", [team_red, team_yellow])
+
     return df
 
 def __get_shot_info(all_texts, is_MD=False) -> list[tuple[str, str, str, str, int]]:
@@ -120,20 +121,38 @@ def __get_shot_info(all_texts, is_MD=False) -> list[tuple[str, str, str, str, in
     """
     
     tplayers = [t for t in all_texts if t and ": " in t]
-    players = [t.split(": ") for t in tplayers]
-    turns = [t for t in all_texts if t in ('↺', '↻')]
-    turns = ['ccw' if t == '↺' else 'cw' for t in turns]
-    scores = [t for t in all_texts if t and '%' in t]
-    scores = [int(s.rstrip('%')) for s in scores]
-    #print(players)
-    #print(turns)
-    #print(scores)
+    players = [
+        [part.strip() for part in re.split(r'(?=[A-Z]{3}: )', s) if part.strip() != ""]
+        for s in tplayers
+        ]
+    players = [item for sublist in players for item in sublist]
+    players = [t.split(": ") for t in players]
 
-    shot_types = [] #ショットの種類はショットスコアの１つ前の要素という条件から抽出
-    for i, t in enumerate(all_texts):
-        if t and ('%' in t or t == '-'):  # スコアを検出
-            if i > 0:
-                shot_types.append(all_texts[i - 1])  # 1つ前がショットタイプ
+    shots = [t for t in all_texts if any(k in t for k in ('↺', '↻'))]
+    
+    # ↺100% / ↻100% の前にスペースを挿入（これで split が可能になる）
+    normalized = [re.sub(r'(?<=[↺↻])(?=\d+%)', ' ', s) for s in shots]
+    # リスト内包表記だけで “技名を1語にまとめて抽出”
+    shots = [
+        token.strip()
+        for s in normalized
+        for token in re.findall(r'[A-Za-z\- ]+|↺|↻|\d+%', s)
+        if token.strip()
+    ]
+    
+    turns = [t for t in shots if t in ('↺', '↻')]
+    turns = ['ccw' if t == '↺' else 'cw' for t in turns]
+    scores = [t for t in shots if t and '%' in t]
+    scores = [int(s.rstrip('%')) for s in scores]
+    shot_types = [
+        s for s in shots 
+        if re.fullmatch(r'[A-Za-z\- ]+', s)
+    ]
+
+    print("shots: ", shots)
+    print("players: ", players)
+    print("turns: ", turns)
+    print("scores: ", scores)
 
     tn = 10 if is_MD else 16
     while len(turns) < tn: #エラー回避のため長さを最大投球数にそろえる
@@ -147,10 +166,10 @@ def __get_shot_info(all_texts, is_MD=False) -> list[tuple[str, str, str, str, in
             players.append([None, None])
     while len(shot_types) < tn:
         shot_types.append(None)
+    print(shot_types)
 
     shot_info = []
     for idx in range(tn):
-
         shot_team = players[idx][0]
         shot_player = players[idx][1]
         shot_type = shot_types[idx]
@@ -190,13 +209,15 @@ def get_hammer(scores, is_md=False) -> list[int]:
     total_ends = non_empty.sum()
 
     for end in range(1, total_ends):
+        """
         if end <= MAX_END:
             str_end = str(end)
         else:
             extra_num = end - MAX_END
             col_idx = scores.columns.get_loc(str(MAX_END)) 
             str_end = scores.columns[col_idx + extra_num]     # 右隣の列名
-
+        """
+        str_end = str(end)
         try:
             if int(scores.at[0, str_end]) > int(scores.at[1, str_end]): #team0が得点した場合
                 hammer_list.append(1)
@@ -211,12 +232,20 @@ def get_hammer(scores, is_md=False) -> list[int]:
             hammer_list.append(None)
 
     return hammer_list
+
+# 数値に変換できるものは int、できないものはそのまま
+def __try_int(x):
+    try:
+        return int(x)
+    except ValueError:
+        return x
+
     
 if __name__ == "__main__":
     file_path = "rb_data/data_4p/PCCC2022Men/PCCC2022_ResultsBook_Men_A-Division.pdf"
-    doc = fitz.open(file_path)
+    #doc = fitz.open(file_path)
     #json = pymupdf4llm.to_json(doc)
     #print(json)
-    page = doc[6]
-    scores = extract_game_result(page)
-    print(scores)
+    #page = doc[6]
+    #scores = extract_game_result(page)
+    #print(scores)
