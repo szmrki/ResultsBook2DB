@@ -5,9 +5,7 @@ import glob
 import os
 
 if __name__ == "__main__":
-    #os.makedirs("tmp", exist_ok=True) 
     IS_MD = False  #MD版かそうでないか
-    MAX_END = 8 if IS_MD else 10  #最大エンド数
 
     color2num = {"red": 0, "yellow": 1}
     num2color = {0: "red", 1: "yellow"}
@@ -15,6 +13,7 @@ if __name__ == "__main__":
     work_dir = os.getcwd()
     #print(work_dir)
     dbname = work_dir +'/db/curling_stones_md_v5.db' if IS_MD else work_dir + '/db/curling_stones_4p_v7.db'
+    dbname = work_dir + '/db/fordebug.db'
     #print(dbname)
     conn = sqlite3.connect(dbname)
     cur = conn.cursor()
@@ -24,10 +23,11 @@ if __name__ == "__main__":
     #Change directory to the starting directory.
     os.chdir(current_dir)
     games = glob.glob("*")
-    print(games)
-
+    #print(games)
+    #games = ["WMCC2022", "WMCC2023", "WMCC2024", "WMCC2025", "WWCC2022", "WWCC2023", "WWCC2024", "WWCC2025"]
+    games = ["WJCC2022Women"]
     for game in games:
-        #game = "ECC2023Men"
+        #game = "WMCC2022"
         #モデルの定義
         if game == "WMCC2025":
             model = YOLO("../../../complete_model/game11_retrain.pt")
@@ -47,12 +47,14 @@ if __name__ == "__main__":
         doc = fitz.open(file_path)
         print(file_path)
         with pdfplumber.open(file_path) as pdf:
-            for pn in range(len(pdf.pages)):
+            for pn in range(doc.page_count):
                 page_num = pn + 1
-                page = pdf.pages[pn]
-                text = page.extract_text()
+                page_plumber = pdf.pages[pn]
+                page_mu = doc[pn]
+                text = page_mu.get_text()
                 if "Game Results" in text: #新たな試合
                     print(f"Game Results page: {page_num}")
+                    """
                     try:
                         scores = extract_game_result(page)   #得点表のdf
                         print(scores)
@@ -60,12 +62,19 @@ if __name__ == "__main__":
                     except Exception as e:
                         print(e)
                         #break
+                    """
+                    scores = extract_game_result(page_plumber) #得点表のdf
+                    print(scores)
                     hammers = get_hammer(scores, IS_MD)  #各エンドのハンマー情報
                     print(hammers)
                     team_red = scores.at[0, "team"]
                     team_yellow = scores.at[1, "team"]
-                    fin_red = int(scores.at[0, "Total"])
-                    fin_yellow = int(scores.at[1, "Total"])
+                    try:
+                        fin_red = int(scores.at[0, "Total"])
+                        fin_yellow = int(scores.at[1, "Total"])
+                    except ValueError:
+                        fin_red = None
+                        fin_yellow = None
                     
                     cur.execute("""INSERT INTO games(event_id, page, team_red, team_yellow, 
                                     final_score_red, final_score_yellow) VALUES (?, ?, ?, ?, ?, ?)""", 
@@ -82,6 +91,7 @@ if __name__ == "__main__":
                         col_idx = scores.columns.get_loc(str(MAX_END)) 
                         str_end = scores.columns[col_idx + extra_num]     # 右隣の列名
                     """
+                    #print(num_end)
                     str_end = str(num_end)
                     try:
                         score_red = int(scores.at[0, str_end])
@@ -100,9 +110,17 @@ if __name__ == "__main__":
                                     score_red, score_yellow))
                     end_id = cur.lastrowid #end_idを取得
                     print(f"Shot-by-Shot page: {page_num}")
-                    stones_end, shot_info = extract_shotbyshot(page, doc, pn, model, IS_MD)
+                    stones_end, shot_info = extract_shotbyshot(doc, page_mu, model, IS_MD)
                     #print(stones_end[0])
-                    #print(shot_info)
+                    print("num shots: ", len(shot_info))
+                    print(shot_info)
+                    """
+                    if stones_end.shape[0] != len(shot_info):
+                        print("num images: ", stones_end.shape[0])
+                        print(shot_info)
+                        break
+                    """
+                    #if page_num == 146: break
 
                     for shot_num, (stones, info) in enumerate(zip(stones_end, shot_info), start=1):
                         team, player_name, shot_type, turn, percent_score = info
@@ -119,10 +137,11 @@ if __name__ == "__main__":
                         cur.executemany("""INSERT INTO stones (shot_id, color, x, y, dist, 
                                         inhouse, insheet) VALUES (?, ?, ?, ?, ?, ?, ?)""", rows)
                     num_end += 1
-                    break
+                    #break
                 else:
                     continue
         doc.close()
-        break
-    conn.commit()
+        conn.commit()
+        #if game == "WJCC2023Women":
+        #    break
     conn.close()
