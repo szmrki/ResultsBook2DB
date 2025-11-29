@@ -12,8 +12,8 @@ if __name__ == "__main__":
 
     work_dir = os.getcwd()
     #print(work_dir)
-    dbname = work_dir +'/db/curling_stones_md_v5.db' if IS_MD else work_dir + '/db/curling_stones_4p_v7.db'
-    dbname = work_dir + '/db/fordebug.db'
+    dbname = work_dir +'/db/curling_stones_md_v5.db' if IS_MD else work_dir + '/db/curling_stones_4p_v8.db'
+    #dbname = work_dir + '/db/fordebug.db'
     #print(dbname)
     conn = sqlite3.connect(dbname)
     cur = conn.cursor()
@@ -25,7 +25,8 @@ if __name__ == "__main__":
     games = glob.glob("*")
     #print(games)
     #games = ["WMCC2022", "WMCC2023", "WMCC2024", "WMCC2025", "WWCC2022", "WWCC2023", "WWCC2024", "WWCC2025"]
-    games = ["WJCC2022Women"]
+    #games = ["ECC2023Men"]
+    count = 0; count2 = 0
     for game in games:
         #game = "WMCC2022"
         #モデルの定義
@@ -112,18 +113,20 @@ if __name__ == "__main__":
                     print(f"Shot-by-Shot page: {page_num}")
                     stones_end, shot_info = extract_shotbyshot(doc, page_mu, model, IS_MD)
                     #print(stones_end[0])
+                    count += len(shot_info)
+                    count2 += stones_end.shape[0]
+                    #print(shot_info)
                     print("num shots: ", len(shot_info))
-                    print(shot_info)
-                    """
+                    
                     if stones_end.shape[0] != len(shot_info):
                         print("num images: ", stones_end.shape[0])
-                        print(shot_info)
                         break
-                    """
+                    
                     #if page_num == 146: break
 
                     for shot_num, (stones, info) in enumerate(zip(stones_end, shot_info), start=1):
-                        team, player_name, shot_type, turn, percent_score = info
+                        shot_type = info["type"]; percent_score = info["score"]
+                        turn = info["turn"]; team = info["team"]; player_name = info["player"]
                         shot_color = num2color[(hammers[num_end - 1] + (shot_num % 2)) % 2] #現在のショットの色を指定
                         cur.execute("""INSERT INTO shots(end_id, number, color, team, player_name, 
                                         type, turn, percent_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", 
@@ -145,3 +148,5 @@ if __name__ == "__main__":
         #if game == "WJCC2023Women":
         #    break
     conn.close()
+    print(count)
+    print(count2)

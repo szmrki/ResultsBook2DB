@@ -6,7 +6,8 @@ import cv2
 import re
 import pdfplumber
 
-def extract_shotbyshot(doc, page, model, is_MD = False) -> tuple[np.ndarray, list[tuple[str, str, str, str, int]]]:
+def extract_shotbyshot(doc, page, model, is_MD = False) -> tuple[np.ndarray, 
+                                                                 list[dict[str, int, str, str, str, int]]]:
     """
         ページからショットバイショット画像を抽出するメソッド
         Args:
@@ -20,8 +21,8 @@ def extract_shotbyshot(doc, page, model, is_MD = False) -> tuple[np.ndarray, lis
     """
     text = page.get_text()
     text = text.splitlines()
-    #print(text)
-    shot_info_list = __get_shot_info(text, is_MD=is_MD)
+    print(text)
+    shot_info_list = __get_shot_info(text)
 
     #========================画像取得===========================
     # ページ内の全画像情報を取得（整数の XREF）
@@ -88,8 +89,8 @@ def extract_shotbyshot(doc, page, model, is_MD = False) -> tuple[np.ndarray, lis
                 "x": missing_bbox.x0,
                 "y": missing_bbox.y0,
             })
-            print("x0=", shotbyshot_list[-1]["x"])
-            print("y0=", shotbyshot_list[-1]["y"])
+            #print("x0=", shotbyshot_list[-1]["x"])
+            #print("y0=", shotbyshot_list[-1]["y"])
 
     # 上→下、左→右でソート(投球順に合わせる)
     shotbyshot_list.sort(key=lambda im: (im["y"], im["x"]))
@@ -97,7 +98,7 @@ def extract_shotbyshot(doc, page, model, is_MD = False) -> tuple[np.ndarray, lis
     stones_end_list = []
     for i,img in enumerate(shotbyshot_list, start=1):
         img = img["img"]
-        cv2.imwrite(f"C:/b4/rb2db/tmp/page{page.number+1}_{i}.png", img)
+        #cv2.imwrite(f"C:/b4/rb2db/tmp/page{page.number+1}_{i}.png", img)
 
         stones = get_stones_pos(img, model)
         stones_end_list.append(stones)
@@ -134,62 +135,66 @@ def extract_game_result(page) -> pd.DataFrame:
 
     return df
 
-def __get_shot_info(all_texts, is_MD=False) -> list[tuple[str, str, str, str, int]]:
+def __get_shot_info(all_texts) -> list[dict[str, int, str, str, str, int]]:
     """
         ショットバイショットのテキスト情報から特定の投球の情報を取得するメソッド
         Args:     
             all_texts : ショットバイショットのすべてのテキスト情報のリスト
-            is_MD : MDかどうか
+            #is_MD : MDかどうか
         Returns:
-            list[tuple[str, str, str, str, int]] : 
-                (チーム名, プレイヤー名, ショットタイプ, 回転方向, ショットスコア)のタプルのリスト
+            list[dict[str, int, str, str, str, int]] : 
+                (チーム名, プレイヤー名, ショットタイプ, 回転方向, ショットスコア)の辞書のリスト
     """
+    score_pattern = re.compile(r"^\d+%$|^-$")
+    turn_pattern = ("↺", "↻")
+    player_pattern = re.compile(r"^[A-Z]{3}: .+$")
 
-    tplayers = [t for t in all_texts if t and ": " in t]
-    players = [t.split(": ") for t in tplayers]
-    turns = [t for t in all_texts if t in ('↺', '↻')]
-    turns = ['ccw' if t == '↺' else 'cw' for t in turns]
-    scores = [t for t in all_texts if t and '%' in t]
-    scores = [int(s.rstrip('%')) for s in scores]
+    shots = []
+    i = 0
+    while i < len(all_texts) - 2:
+        # --- パターン A：回転あり（4要素） ---
+        if i <= len(all_texts) - 4:
+            type, score, turn, player = all_texts[i:i+4]
 
-    shot_types = [] #ショットの種類はショットスコアの１つ前の要素という条件から抽出
-    for i, t in enumerate(all_texts):
-        if t and ('%' in t or t == '-'):  # スコアを検出
-            if i > 0:
-                shot_types.append(all_texts[i - 1])  # 1つ前がショットタイプ
+            if score_pattern.match(score) and turn in turn_pattern \
+            and player_pattern.match(player):
+                if turn == "↻":
+                    turn = "cw"
+                elif turn == "↺":
+                    turn = "ccw"
+                else: turn = None
+                team, player = player.split(": ")
+                score = int(score.rstrip('%')) if '%' in score else None
 
-    #print("shots: ", shots)
-    #print("players: ", players)
-    #print("turns: ", turns)
-    #print("scores: ", scores)
+                shots.append({
+                    "type": type,
+                    "score": score,
+                    "turn": turn,
+                    "team": team,
+                    "player": player,
+                })
+                i += 4
+                continue
 
-    tn = 10 if is_MD else 16
-    while len(players) < tn: #WMDCC2023において1投目にプレイヤーが記載されていないことがあったため先頭に空白を追加
-        if len(turns) == tn: #1エンドすべて投球されている場合
-            players.insert(0, [None, None])
-        else:  #コンシード等ですべて投球されていない場合
-            players.append([None, None])
-    while len(turns) < tn: #エラー回避のため長さを最大投球数にそろえる
-        turns.append(None)
-    while len(scores) < tn:
-        scores.append(None)
-    while len(shot_types) < tn:
-        shot_types.append(None)
-    #print(shot_types)
+        # --- パターン B：回転なし（3要素） ---
+        type, score, player = all_texts[i:i+3]
+        if score_pattern.match(score) and player_pattern.match(player):
+            team, player = player.split(": ")
+            score = int(score.rstrip('%')) if '%' in score else None
+            shots.append({
+                "type": type,
+                "score": score,
+                "turn": None,  # 欠損扱い
+                "team": team,
+                "player": player,
+            })
+            i += 3
+            continue
 
-    shot_info = []
-    for idx in range(tn):
-        shot_team = players[idx][0]
-        shot_player = players[idx][1]
-        shot_type = shot_types[idx]
-        shot_turn = turns[idx]
-        shot_score = scores[idx]
-        if shot_turn == None and shot_score == None:
-            break
-
-        shot_info.append((shot_team, shot_player, shot_type, shot_turn, shot_score))
+        # どちらにも該当しない場合は1進める
+        i += 1
     
-    return shot_info
+    return shots
 
 def get_hammer(scores, is_md=False) -> list[int]: 
     """
@@ -318,7 +323,6 @@ def __pixmap2cv2(pix: fitz.Pixmap) -> np.ndarray:
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
     
     return img
-
     
 if __name__ == "__main__":
     file_path = "rb_data/data_4p/PCCC2022Men/PCCC2022_ResultsBook_Men_A-Division.pdf"
