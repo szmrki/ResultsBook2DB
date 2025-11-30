@@ -1,6 +1,7 @@
 from ultralytics import YOLO
 import numpy as np
 import cv2
+import os
 
 WIDTH = 299
 TEE_LINE = 159.5
@@ -114,6 +115,64 @@ def get_hammer_img(img_path, is_md=False, game=None) -> str:
             return "red"
         else:
             return "yellow"
+
+def create_pseudo_label(model: YOLO, image_dir, output_dir) -> None:
+    """
+        既存のモデルを用いて予測を行い、疑似ラベルを生成する
+        Args:
+            model : YOLOのモデル
+            image_dir : 予測したい画像が格納されているディレクトリ名
+            output_dir : ラベルの保存先
+    """
+    imgs = [img for img in os.listdir(image_dir) if img.endswith(".png")]
+    for img_path in imgs:
+        print(img_path)
+        img_path = os.path.join(image_dir, img_path)
+
+        # 推論（OpenCV画像データを直接渡す）
+        results = model.predict(
+            source=img_path,                 
+            iou=0.3,                    # NMS IoUしきい値
+            #conf=0.5,                   #信頼度しきい値
+            save=False,                 # 結果画像を保存しない
+            save_txt=False,
+            exist_ok=True,
+            verbose=False,    
+        )
+        boxes = results[0].boxes
+        txt_data = []
+        skip_flag = False
+        for box in boxes:
+            cls = int(box.cls[0])
+            x, y, w, h = box.xywhn[0]
+            conf = float(box.conf[0])
+            if conf < 0.8:   #全検出物体の確信度が0.8以上の画像を疑似ラベルとする
+                skip_flag = True
+                break
+            txt_data.append((cls, 
+                             round(x.item(), 6), 
+                             round(y.item(), 6),
+                             round(w.item(), 7), 
+                             round(h.item(), 7),
+                             ))
+            
+        if skip_flag: 
+            os.remove(img_path)
+            continue
+        else:
+            # ファイル名を保存用に使う
+            img_file = os.path.basename(img_path)
+            txt_file = f"{os.path.splitext(img_file)[0]}.txt"
+            with open(os.path.join(output_dir, txt_file), "w") as f:
+                for txt in txt_data:
+                    line = " ".join(map(str, txt))
+                    f.write(line + "\n")
+
+class MyYOLO(YOLO):
+    def fine_tune(self, ) -> None:
+        self.train()
+        #訓練を行う。
+        return
         
 if __name__ == "__main__":
     model = YOLO("complete_model/game10_2_retrain.pt")

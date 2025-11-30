@@ -3,3 +3,5 @@ __pycache__
 db
 rb_data
 tmp/
+yolo_dataset/
+yaml/

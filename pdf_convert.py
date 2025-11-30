@@ -1,5 +1,4 @@
 from tools import *
-from ultralytics import YOLO
 import sqlite3
 import glob
 import os
@@ -13,7 +12,7 @@ if __name__ == "__main__":
     work_dir = os.getcwd()
     #print(work_dir)
     dbname = work_dir +'/db/curling_stones_md_v5.db' if IS_MD else work_dir + '/db/curling_stones_4p_v8.db'
-    #dbname = work_dir + '/db/fordebug.db'
+    dbname = work_dir + '/db/fordebug.db'
     #print(dbname)
     conn = sqlite3.connect(dbname)
     cur = conn.cursor()
@@ -25,21 +24,22 @@ if __name__ == "__main__":
     games = glob.glob("*")
     #print(games)
     #games = ["WMCC2022", "WMCC2023", "WMCC2024", "WMCC2025", "WWCC2022", "WWCC2023", "WWCC2024", "WWCC2025"]
-    #games = ["ECC2023Men"]
-    count = 0; count2 = 0
+    games = ["ECC2023Men"]
+    #count = 0; count2 = 0
     for game in games:
+        #break
         #game = "WMCC2022"
         #モデルの定義
         if game == "WMCC2025":
-            model = YOLO("../../../complete_model/game11_retrain.pt")
+            model = YOLO(os.path.join(work_dir, "complete_model/game11_retrain.pt"))
         elif game == "WWCC2025":
-            model = YOLO("../../../complete_model/game12.pt")
+            model = YOLO(os.path.join(work_dir, "complete_model/game11_retrain.pt"))
         elif game in ["WMCC2022", "WMCC2023", "WMCC2024", "WWCC2023", 
                         "WWCC2024", "PCCC2024Men", "PCCC2024Women",
                         "PCCC2025Men", "PCCC2025Women"]:
-            model = YOLO("../../../complete_model/game13.pt")
+            model = YOLO(os.path.join(work_dir, "complete_model/game11_retrain.pt"))
         else:
-            model = YOLO("../../../complete_model/game10_2_retrain.pt")
+            model = YOLO(os.path.join(work_dir, "complete_model/game11_retrain.pt"))
         
         cur.execute('INSERT INTO event(name) VALUES (?)', (game,)) #eventテーブルに大会の名前を記述
         event_id = cur.lastrowid #event_idを取得
@@ -47,6 +47,32 @@ if __name__ == "__main__":
         file_path = glob.glob(f"{game}/*.pdf")[0]
         doc = fitz.open(file_path)
         print(file_path)
+
+        ### PDFファイルから画像を400枚程度抽出し、予測を行い疑似ラベルを生成
+        image_dir = work_dir + "/yolo_dataset/images"
+        label_dir = work_dir +"/yolo_dataset/labels"
+        yaml_path = work_dir + "/yaml/data.yaml"
+        dataset_dir = work_dir + "/yolo_dataset"
+        save_images(doc, output_dir=image_dir, save_num=500)
+        create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir)
+        split_train_val(image_dir, label_dir, train_ratio=0.8)
+        create_yaml(yaml_path, dataset_dir)
+
+        ### 疑似ラベルを用いてモデルのファインチューニングを行う
+        model.train(
+            data=yaml_path,    # データセット（train/val のパスを含む）
+            epochs=50,
+            imgsz=(300,600),
+            iou=0.3,
+            conf=0.5
+        )
+
+        delete_files(image_dir+"/train")
+        delete_files(label_dir+"/train")
+        delete_files(image_dir+"/val")
+        delete_files(label_dir+"/val")
+        break
+
         with pdfplumber.open(file_path) as pdf:
             for pn in range(doc.page_count):
                 page_num = pn + 1
@@ -145,8 +171,9 @@ if __name__ == "__main__":
                     continue
         doc.close()
         conn.commit()
+        
         #if game == "WJCC2023Women":
         #    break
     conn.close()
-    print(count)
-    print(count2)
+    #print(count)
+    #print(count2)

@@ -1,10 +1,14 @@
 import fitz  # PyMuPDF
 import pandas as pd
 import numpy as np
-from detection import get_stones_pos
+from detection import *
 import cv2
 import re
 import pdfplumber
+import yaml
+import random
+import shutil
+from pathlib import Path
 
 def extract_shotbyshot(doc, page, model, is_MD = False) -> tuple[np.ndarray, 
                                                                  list[dict[str, int, str, str, str, int]]]:
@@ -26,39 +30,7 @@ def extract_shotbyshot(doc, page, model, is_MD = False) -> tuple[np.ndarray,
 
     #========================画像取得===========================
     # ページ内の全画像情報を取得（整数の XREF）
-    img_list = page.get_images(full=True)
-    #print("img_list: ", img_list)
-
-    tmp_shotbyshot_list = []
-    for img in img_list:
-        width = img[2]
-        height = img[3]
-        #print(f"width: {width}, height: {height}")
-        if 298 <= width <= 302 and 598 <= height <= 602: #基本は300x600
-            tmp_shotbyshot_list.append(img)
-    #print(len(tmp_shotbyshot_list))
-
-    shotbyshot_list = []
-    bboxes = []    #画像補完用
-    # ページ内の画像情報を取得
-    for img in tmp_shotbyshot_list:
-        # 画像のページ上の座標を取得
-        bbox = page.get_image_bbox(img)
-        x0, y0, x1, y1 = bbox  # 左上(x0,y0)と右下(x1,y1)
-        
-        #print(f"bbox={bbox}, x0={x0}, y0={y0}, x1={x1}, y1={y1}")
-        bboxes.append(bbox)
-        
-        #画像に変換する
-        xref = img[0]
-        pix = fitz.Pixmap(doc, xref)
-        img = __pixmap2cv2(pix)
-
-        shotbyshot_list.append({
-            "img": img,
-            "x": x0,
-            "y": y0,
-        })
+    shotbyshot_list, bboxes = __extract_images(doc, page)
 
     # ショット情報と画像の枚数の確認をする
     # 画像の方が枚数が少ない場合、正しく取得できていない画像が存在するため、補完する
@@ -247,6 +219,166 @@ def get_hammer(scores, is_md=False) -> list[int]:
 
     return hammer_list
 
+def save_images(doc, output_dir, save_num: int) -> None:
+    """
+        PDFからシート画像を指定した枚数抽出し保存する
+        Args:
+            doc : PyMuPDFのオブジェクト
+            output_dir : 画像出力先ディレクトリ名
+            save_num : 保存する枚数
+    """
+    num_images = 0
+    for pn in range(doc.page_count):
+        page = doc[pn]
+        text = page.get_text()
+        if "Shot by Shot" in text:
+            shotbyshot_list, _ = __extract_images(doc, page)
+
+            for i,img in enumerate(shotbyshot_list, start=1):
+                img = img["img"]
+                img[:20,1:-2] = 255
+                img[-19:,1:-2] = 255 #白マスク
+                cv2.imwrite(os.path.join(output_dir, f"page{pn+1}_{i}.png"), img)
+
+            num_images += len(shotbyshot_list)
+            if num_images >= save_num: break
+        else: continue
+
+def __extract_images(doc, page) -> tuple[list, list]:
+    """
+        PDFからシート画像を抽出し,辞書形式で保持する
+        Args:
+            doc : PyMuPDFのファイルオブジェクト
+            page : PyMuPDFのページオブジェクト
+        Returns:
+            shotbyshot_list : 各画像の情報の辞書形式をまとめたリスト
+                    "img": 画像のnumpy配列
+                    "x": 画像左上のx座標
+                    "y": 画像左上のy座標
+            bboxes : 各画像のbboxの座標をまとめたリスト
+    """
+    # ページ内の全画像情報を取得（整数の XREF）
+    img_list = page.get_images(full=True)
+    #print("img_list: ", img_list)
+
+    tmp_shotbyshot_list = []
+    for img in img_list:
+        width = img[2]
+        height = img[3]
+        #print(f"width: {width}, height: {height}")
+        if 298 <= width <= 302 and 598 <= height <= 602: #基本は300x600
+            tmp_shotbyshot_list.append(img)
+    #print(len(tmp_shotbyshot_list))
+
+    shotbyshot_list = []
+    bboxes = []    #画像補完用
+    # ページ内の画像情報を取得
+    for img in tmp_shotbyshot_list:
+        # 画像のページ上の座標を取得
+        bbox = page.get_image_bbox(img)
+        x0, y0, x1, y1 = bbox  # 左上(x0,y0)と右下(x1,y1)
+        
+        #print(f"bbox={bbox}, x0={x0}, y0={y0}, x1={x1}, y1={y1}")
+        bboxes.append(bbox)
+        
+        #画像に変換する
+        xref = img[0]
+        pix = fitz.Pixmap(doc, xref)
+        img = __pixmap2cv2(pix)
+
+        shotbyshot_list.append({
+            "img": img,
+            "x": x0,
+            "y": y0,
+        })
+    return shotbyshot_list, bboxes
+
+def split_train_val(image_dir, label_dir, train_ratio=0.8, seed=42) -> None:
+    """
+        画像とラベルを訓練用と検証用に分割する
+        Args:
+            image_dir : 画像のパス
+            label_dir : ラベルのパス
+            train_ratio : 訓練データの割合(0~1)
+            seed : 乱数用のシード
+    """
+    random.seed(seed)
+
+    # 出力フォルダ作成
+    train_img_dir = os.path.join(image_dir, "train")
+    val_img_dir = os.path.join(image_dir, "val")
+    train_lbl_dir = os.path.join(label_dir, "train")
+    val_lbl_dir = os.path.join(label_dir, "val")
+
+    os.makedirs(train_img_dir, exist_ok=True)
+    os.makedirs(val_img_dir, exist_ok=True)
+    os.makedirs(train_lbl_dir, exist_ok=True)
+    os.makedirs(val_lbl_dir, exist_ok=True)
+
+    # 画像一覧取得（.png限定）
+    images = [f for f in os.listdir(image_dir) if f.endswith(".png")]
+
+    for img_name in images:
+        base = os.path.splitext(img_name)[0]
+        lbl_name = base + ".txt"
+        img_path = os.path.join(image_dir, img_name)
+        lbl_path = os.path.join(label_dir, lbl_name)
+
+        # ラベルが無い場合はスキップ
+        if not os.path.exists(lbl_path):
+            print(f"[警告] ラベルが無いためスキップ: {img_name}")
+            continue
+
+        # train or val に振り分け
+        if random.random() < train_ratio:
+            dst_img = train_img_dir
+            dst_lbl = train_lbl_dir
+        else:
+            dst_img = val_img_dir
+            dst_lbl = val_lbl_dir
+
+        # ファイル移動
+        shutil.move(img_path, os.path.join(dst_img, img_name))
+        shutil.move(lbl_path, os.path.join(dst_lbl, lbl_name))
+
+def create_yaml(
+        save_path,
+        dataset_root,
+        train="images/train",
+        val="images/val",
+        ) -> None:
+    """
+        YOLOの学習用のyamlファイルを作成する
+        Args: 
+            save_path : 保存ファイル名
+            dataset_root : データのパス
+            train : 訓練画像のパス
+            val : 検証画像のパス
+    """
+    names = ["red", "yellow"]
+
+    yaml_dict = {
+        "path": dataset_root,
+        "train": train,
+        "val": val,
+        "names": {i: name for i, name in enumerate(names)}
+    }
+
+    with open(save_path, "w", encoding="utf-8") as f:
+        yaml.dump(yaml_dict, f, allow_unicode=True)
+
+def delete_files(dir) -> None:
+    """
+        指定されたディレクトリ内のすべてのファイルを削除する
+        Args: 
+            dir : 削除対象のディレクトリ
+    """
+    # フォルダ内の全ファイルを削除（サブフォルダは無視）
+    for file in Path(dir).iterdir():
+        if file.is_file():
+            file.unlink()
+
+
 # 数値に変換できるものは int、できないものはそのまま
 def __try_int(x):
     try:
@@ -315,7 +447,7 @@ def __pixmap2cv2(pix: fitz.Pixmap) -> np.ndarray:
     """
     if pix.n >= 5:
         pix = fitz.Pixmap(fitz.csRGB, pix) #RGBに変換
-    # Pixmap.samples は bytes なので NumPy 配列に変換
+    # Pixmap.samples は bytes なので numpy配列に変換
     img = np.frombuffer(pix.samples, dtype=np.uint8)
     # 高さ・幅・チャンネル数に reshape
     img = img.reshape(pix.height, pix.width, pix.n)
