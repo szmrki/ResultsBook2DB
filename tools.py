@@ -342,10 +342,10 @@ def split_train_val(image_dir, label_dir, train_ratio=0.8, seed=42) -> None:
         shutil.move(lbl_path, os.path.join(dst_lbl, lbl_name))
 
 def create_yaml(
-        save_path,
-        dataset_root,
-        train="images/train",
-        val="images/val",
+        save_path: Path,
+        dataset_root: Path,
+        train_path=Path("images/train"),
+        val_path=Path("images/val"),
         ) -> None:
     """
         YOLOの学習用のyamlファイルを作成する
@@ -358,9 +358,9 @@ def create_yaml(
     names = ["red", "yellow"]
 
     yaml_dict = {
-        "path": dataset_root,
-        "train": train,
-        "val": val,
+        "path": str(dataset_root),
+        "train": str(train_path),
+        "val": str(val_path),
         "names": {i: name for i, name in enumerate(names)}
     }
 

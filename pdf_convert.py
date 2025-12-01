@@ -9,16 +9,18 @@ if __name__ == "__main__":
     color2num = {"red": 0, "yellow": 1}
     num2color = {0: "red", 1: "yellow"}
 
-    work_dir = os.getcwd()
+    work_dir = Path.cwd()
     #print(work_dir)
-    dbname = work_dir +'/db/curling_stones_md_v5.db' if IS_MD else work_dir + '/db/curling_stones_4p_v8.db'
-    dbname = work_dir + '/db/fordebug.db'
+    model_dir = work_dir / "complete_model"
+    db_dir = work_dir / "db"
+    dbname = db_dir / "curling_stones_md_v5.db" if IS_MD else db_dir / "curling_stones_4p_v8.db"
+    dbname = db_dir / "fordebug.db"
     #print(dbname)
     conn = sqlite3.connect(dbname)
     cur = conn.cursor()
 
     #Where we want to look for the data (nominally the data/ directory).
-    current_dir = work_dir + '/rb_data/data_md' if IS_MD else work_dir + '/rb_data/data_4p'
+    current_dir = work_dir / "rb_data" / "data_md" if IS_MD else work_dir / "rb_data" / "data_4p"
     #Change directory to the starting directory.
     os.chdir(current_dir)
     games = glob.glob("*")
@@ -31,15 +33,15 @@ if __name__ == "__main__":
         #game = "WMCC2022"
         #モデルの定義
         if game == "WMCC2025":
-            model = YOLO(os.path.join(work_dir, "complete_model/game11_retrain.pt"))
+            model = YOLO(model_dir / "game11_retrain.pt")
         elif game == "WWCC2025":
-            model = YOLO(os.path.join(work_dir, "complete_model/game11_retrain.pt"))
+            model = YOLO(model_dir / "game11_retrain.pt")
         elif game in ["WMCC2022", "WMCC2023", "WMCC2024", "WWCC2023", 
                         "WWCC2024", "PCCC2024Men", "PCCC2024Women",
                         "PCCC2025Men", "PCCC2025Women"]:
-            model = YOLO(os.path.join(work_dir, "complete_model/game11_retrain.pt"))
+            model = YOLO(model_dir / "game11_retrain.pt")
         else:
-            model = YOLO(os.path.join(work_dir, "complete_model/game11_retrain.pt"))
+            model = YOLO(model_dir / "game10_2_retrain.pt")
         
         cur.execute('INSERT INTO event(name) VALUES (?)', (game,)) #eventテーブルに大会の名前を記述
         event_id = cur.lastrowid #event_idを取得
@@ -49,10 +51,10 @@ if __name__ == "__main__":
         print(file_path)
 
         ### PDFファイルから画像を400枚程度抽出し、予測を行い疑似ラベルを生成
-        image_dir = work_dir + "/yolo_dataset/images"
-        label_dir = work_dir +"/yolo_dataset/labels"
-        yaml_path = work_dir + "/yaml/data.yaml"
-        dataset_dir = work_dir + "/yolo_dataset"
+        dataset_dir = work_dir / "yolo_dataset"
+        image_dir = dataset_dir / "images"
+        label_dir = dataset_dir / "labels"
+        yaml_path = work_dir / "yaml" / "data.yaml"     
         save_images(doc, output_dir=image_dir, save_num=500)
         create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir)
         split_train_val(image_dir, label_dir, train_ratio=0.8)
@@ -64,13 +66,22 @@ if __name__ == "__main__":
             epochs=50,
             imgsz=(300,600),
             iou=0.3,
-            conf=0.5
+            conf=0.5,
+            save=False,
+            exist_ok=True,
         )
 
-        delete_files(image_dir+"/train")
-        delete_files(label_dir+"/train")
-        delete_files(image_dir+"/val")
-        delete_files(label_dir+"/val")
+        #best.ptをcomplete_modelに移動し、大会名にリネーム
+        # すでに存在する場合は削除して上書き可能にする
+        dst = model_dir / f"{game}.pt"
+        if dst.exists():
+            dst.unlink()  # ファイル削除
+        Path("runs/detect/train/weights/best.pt").rename(dst) 
+
+        delete_files(image_dir / "train")
+        delete_files(label_dir / "train")
+        delete_files(image_dir / "val")
+        delete_files(label_dir / "val")
         break
 
         with pdfplumber.open(file_path) as pdf:
