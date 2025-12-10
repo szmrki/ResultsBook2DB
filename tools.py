@@ -25,7 +25,7 @@ def extract_shotbyshot(doc, page, model, is_MD = False) -> tuple[np.ndarray,
     """
     text = page.get_text()
     text = text.splitlines()
-    print(text)
+    #print(text)
     shot_info_list = __get_shot_info(text)
 
     #========================画像取得===========================
@@ -68,9 +68,8 @@ def extract_shotbyshot(doc, page, model, is_MD = False) -> tuple[np.ndarray,
     shotbyshot_list.sort(key=lambda im: (im["y"], im["x"]))
             
     stones_end_list = []
-    for i,img in enumerate(shotbyshot_list, start=1):
+    for img in shotbyshot_list:
         img = img["img"]
-        #cv2.imwrite(f"C:/b4/rb2db/tmp/page{page.number+1}_{i}.png", img)
 
         stones = get_stones_pos(img, model)
         stones_end_list.append(stones)
@@ -219,7 +218,7 @@ def get_hammer(scores, is_md=False) -> list[int]:
 
     return hammer_list
 
-def save_images(doc, output_dir, save_num: int) -> None:
+def save_images(doc: fitz.open, output_dir: Path, save_num: int) -> None:
     """
         PDFからシート画像を指定した枚数抽出し保存する
         Args:
@@ -227,6 +226,7 @@ def save_images(doc, output_dir, save_num: int) -> None:
             output_dir : 画像出力先ディレクトリ名
             save_num : 保存する枚数
     """
+    output_dir.mkdir(parents=True, exist_ok=True)
     num_images = 0
     for pn in range(doc.page_count):
         page = doc[pn]
@@ -244,7 +244,7 @@ def save_images(doc, output_dir, save_num: int) -> None:
             if num_images >= save_num: break
         else: continue
 
-def __extract_images(doc, page) -> tuple[list, list]:
+def __extract_images(doc: fitz.open, page) -> tuple[list, list]:
     """
         PDFからシート画像を抽出し,辞書形式で保持する
         Args:
@@ -293,7 +293,7 @@ def __extract_images(doc, page) -> tuple[list, list]:
         })
     return shotbyshot_list, bboxes
 
-def split_train_val(image_dir, label_dir, train_ratio=0.8, seed=42) -> None:
+def split_train_val(image_dir: Path, label_dir: Path, train_ratio=0.8, seed=42) -> None:
     """
         画像とラベルを訓練用と検証用に分割する
         Args:
@@ -305,15 +305,21 @@ def split_train_val(image_dir, label_dir, train_ratio=0.8, seed=42) -> None:
     random.seed(seed)
 
     # 出力フォルダ作成
-    train_img_dir = os.path.join(image_dir, "train")
-    val_img_dir = os.path.join(image_dir, "val")
-    train_lbl_dir = os.path.join(label_dir, "train")
-    val_lbl_dir = os.path.join(label_dir, "val")
+    train_img_dir = image_dir / "train"
+    val_img_dir = image_dir / "val"
+    train_lbl_dir = label_dir / "train"
+    val_lbl_dir = label_dir / "val"
 
+    train_img_dir.mkdir(parents=True, exist_ok=True)
+    val_img_dir.mkdir(parents=True, exist_ok=True)
+    train_lbl_dir.mkdir(parents=True, exist_ok=True)
+    val_lbl_dir.mkdir(parents=True, exist_ok=True)
+    """
     os.makedirs(train_img_dir, exist_ok=True)
     os.makedirs(val_img_dir, exist_ok=True)
     os.makedirs(train_lbl_dir, exist_ok=True)
     os.makedirs(val_lbl_dir, exist_ok=True)
+    """
 
     # 画像一覧取得（.png限定）
     images = [f for f in os.listdir(image_dir) if f.endswith(".png")]
@@ -457,10 +463,55 @@ def __pixmap2cv2(pix: fitz.Pixmap) -> np.ndarray:
     return img
     
 if __name__ == "__main__":
-    file_path = "rb_data/data_4p/PCCC2022Men/PCCC2022_ResultsBook_Men_A-Division.pdf"
-    #doc = fitz.open(file_path)
-    #json = pymupdf4llm.to_json(doc)
-    #print(json)
-    #page = doc[6]
+    work_dir = Path.cwd()
+    dataset_dir = work_dir / "yolo_dataset"
+    image_dir = dataset_dir / "images"
+    label_dir = dataset_dir / "labels"
+    yaml_path = work_dir / "yaml" / "data.yaml"
+    model_dir = work_dir / "complete_model"
+    model = YOLO(Path("complete_model/base.pt"))
+    #画像とラベルを削除
+    delete_files(image_dir / "train")
+    delete_files(label_dir / "train")
+    delete_files(image_dir / "val")
+    delete_files(label_dir / "val")
+
+    file_path = Path("rb_data/data_4p/WWCC2025/WWCC2025_ResultsBook.pdf")
+    doc = fitz.open(file_path)
+    
+    save_images(doc, output_dir=image_dir, save_num=500)
+    create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir, threshold=0.7)
+    split_train_val(image_dir, label_dir, train_ratio=0.8)
+    create_yaml(yaml_path, dataset_dir)
+
+    ### 疑似ラベルを用いてモデルのファインチューニングを行う
+    model.train(
+        data=yaml_path,    # データセット（train/val のパスを含む）
+        epochs=50,
+        imgsz=600,
+        iou=0.3,
+        conf=0.5,
+        #save=False,
+        exist_ok=True,
+    )
+    game_pt = model_dir / "WWCC2025.pt"
+    try:
+        #best.ptをcomplete_modelに移動し、大会名にリネーム
+        if game_pt.is_file():
+            game_pt.unlink()
+        Path("runs/detect/train/weights/best.pt").rename(game_pt) 
+    except FileNotFoundError:
+        model.save(game_pt)
+
+    models = [model_dir / "base.pt", game_pt]
+    for m in models:
+        model = YOLO(m)
+        metrics = model.val(
+            data=yaml_path,
+            imgsz=600,
+            iou=0.3,
+            conf=0.5,
+        )
+        print(m, metrics.box.map50, metrics.box.map)
     #scores = extract_game_result(page)
     #print(scores)

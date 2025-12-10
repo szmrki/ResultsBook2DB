@@ -116,7 +116,7 @@ def get_hammer_img(img_path, is_md=False, game=None) -> str:
         else:
             return "yellow"
 
-def create_pseudo_label(model: YOLO, image_dir, output_dir) -> None:
+def create_pseudo_label(model: YOLO, image_dir, output_dir, threshold=0.8) -> None:
     """
         既存のモデルを用いて予測を行い、疑似ラベルを生成する
         Args:
@@ -146,7 +146,7 @@ def create_pseudo_label(model: YOLO, image_dir, output_dir) -> None:
             cls = int(box.cls[0])
             x, y, w, h = box.xywhn[0]
             conf = float(box.conf[0])
-            if conf < 0.8:   #全検出物体の確信度が0.8以上の画像を疑似ラベルとする
+            if conf < threshold:   #全検出物体の確信度が0.8以上の画像を疑似ラベルとする
                 skip_flag = True
                 break
             txt_data.append((cls, 

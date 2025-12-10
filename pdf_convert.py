@@ -14,7 +14,7 @@ if __name__ == "__main__":
     model_dir = work_dir / "complete_model"
     db_dir = work_dir / "db"
     dbname = db_dir / "curling_stones_md_v5.db" if IS_MD else db_dir / "curling_stones_4p_v8.db"
-    dbname = db_dir / "fordebug.db"
+    #dbname = db_dir / "fordebug.db"
     #print(dbname)
     conn = sqlite3.connect(dbname)
     cur = conn.cursor()
@@ -23,26 +23,23 @@ if __name__ == "__main__":
     current_dir = work_dir / "rb_data" / "data_md" if IS_MD else work_dir / "rb_data" / "data_4p"
     #Change directory to the starting directory.
     os.chdir(current_dir)
+    try:
+        shutil.rmtree(Path("runs"))
+        Path("yolo11n.pt").unlink(missing_ok=True)
+    except FileNotFoundError:
+        pass
     games = glob.glob("*")
     #print(games)
-    #games = ["WMCC2022", "WMCC2023", "WMCC2024", "WMCC2025", "WWCC2022", "WWCC2023", "WWCC2024", "WWCC2025"]
-    games = ["ECC2023Men"]
+    #games = ["PCCC2022Men", "PCCC2022Women", "PCCC2023Men", "PCCC2023Women", 
+             #"PCCC2024Men", "PCCC2024Women", "PCCC2025Men", "PCCC2025Women",
+             #"WJCC2022Men", "WJCC2022Women", "WJCC2023Men", "WJCC2023Women",
+             #"WMCC2022", "WMCC2023", "WMCC2024", "WMCC2025", "WWCC2022", "WWCC2023", "WWCC2024", "WWCC2025"]
+    #games = ["WWCC2025"]
     #count = 0; count2 = 0
     for game in games:
         #break
         #game = "WMCC2022"
-        #モデルの定義
-        if game == "WMCC2025":
-            model = YOLO(model_dir / "game11_retrain.pt")
-        elif game == "WWCC2025":
-            model = YOLO(model_dir / "game11_retrain.pt")
-        elif game in ["WMCC2022", "WMCC2023", "WMCC2024", "WWCC2023", 
-                        "WWCC2024", "PCCC2024Men", "PCCC2024Women",
-                        "PCCC2025Men", "PCCC2025Women"]:
-            model = YOLO(model_dir / "game11_retrain.pt")
-        else:
-            model = YOLO(model_dir / "game10_2_retrain.pt")
-        
+
         cur.execute('INSERT INTO event(name) VALUES (?)', (game,)) #eventテーブルに大会の名前を記述
         event_id = cur.lastrowid #event_idを取得
 
@@ -50,39 +47,49 @@ if __name__ == "__main__":
         doc = fitz.open(file_path)
         print(file_path)
 
-        ### PDFファイルから画像を400枚程度抽出し、予測を行い疑似ラベルを生成
-        dataset_dir = work_dir / "yolo_dataset"
-        image_dir = dataset_dir / "images"
-        label_dir = dataset_dir / "labels"
-        yaml_path = work_dir / "yaml" / "data.yaml"     
-        save_images(doc, output_dir=image_dir, save_num=500)
-        create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir)
-        split_train_val(image_dir, label_dir, train_ratio=0.8)
-        create_yaml(yaml_path, dataset_dir)
+        #モデルの定義
+        #該当の大会についてファインチューニング済みであればそれを用いる
+        game_pt = model_dir / f"{game}.pt"
+        if not game_pt.exists():
+        #if True:
+            model = YOLO(model_dir / "base.pt") #ベースモデルを選択
+        
+            ### PDFファイルから画像を400枚程度抽出し、予測を行い疑似ラベルを生成
+            dataset_dir = work_dir / "yolo_dataset"
+            image_dir = dataset_dir / "images"
+            label_dir = dataset_dir / "labels"
+            yaml_path = work_dir / "yaml" / "data.yaml"     
+            save_images(doc, output_dir=image_dir, save_num=500)
+            create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir, threshold=0.75)
+            split_train_val(image_dir, label_dir, train_ratio=0.8)
+            create_yaml(yaml_path, dataset_dir)
 
-        ### 疑似ラベルを用いてモデルのファインチューニングを行う
-        model.train(
-            data=yaml_path,    # データセット（train/val のパスを含む）
-            epochs=50,
-            imgsz=(300,600),
-            iou=0.3,
-            conf=0.5,
-            save=False,
-            exist_ok=True,
-        )
+            ### 疑似ラベルを用いてモデルのファインチューニングを行う
+            model.train(
+                data=yaml_path,    # データセット（train/val のパスを含む）
+                epochs=50,
+                imgsz=600,
+                iou=0.3,
+                conf=0.5,
+                save=False,
+                exist_ok=True,
+            )
 
-        #best.ptをcomplete_modelに移動し、大会名にリネーム
-        # すでに存在する場合は削除して上書き可能にする
-        dst = model_dir / f"{game}.pt"
-        if dst.exists():
-            dst.unlink()  # ファイル削除
-        Path("runs/detect/train/weights/best.pt").rename(dst) 
-
-        delete_files(image_dir / "train")
-        delete_files(label_dir / "train")
-        delete_files(image_dir / "val")
-        delete_files(label_dir / "val")
-        break
+            Path(game_pt).unlink(missing_ok=True) #game_ptが存在する場合削除
+            try:
+                #best.ptをcomplete_modelに移動し、大会名にリネーム
+                Path("runs/detect/train/weights/best.pt").rename(game_pt) 
+            except FileNotFoundError:
+                model.save(game_pt)
+            
+            #画像とラベルを削除
+            delete_files(image_dir / "train")
+            delete_files(label_dir / "train")
+            delete_files(image_dir / "val")
+            delete_files(label_dir / "val")
+        else: pass
+        #break
+        model = YOLO(game_pt) #ファインチューニング済みモデルをロード
 
         with pdfplumber.open(file_path) as pdf:
             for pn in range(doc.page_count):
@@ -121,14 +128,6 @@ if __name__ == "__main__":
                     num_end = 1
 
                 elif "Shot by Shot" in text: #新たなエンド
-                    """           
-                    if num_end <= MAX_END:
-                        str_end = str(num_end)
-                    else: #EEの場合は列名が数値に変換できなくなるので、10(8)の右隣の列名を取得
-                        extra_num = num_end - MAX_END
-                        col_idx = scores.columns.get_loc(str(MAX_END)) 
-                        str_end = scores.columns[col_idx + extra_num]     # 右隣の列名
-                    """
                     #print(num_end)
                     str_end = str(num_end)
                     try:
@@ -150,8 +149,8 @@ if __name__ == "__main__":
                     print(f"Shot-by-Shot page: {page_num}")
                     stones_end, shot_info = extract_shotbyshot(doc, page_mu, model, IS_MD)
                     #print(stones_end[0])
-                    count += len(shot_info)
-                    count2 += stones_end.shape[0]
+                    #count += len(shot_info)
+                    #count2 += stones_end.shape[0]
                     #print(shot_info)
                     print("num shots: ", len(shot_info))
                     
