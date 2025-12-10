@@ -99,15 +99,7 @@ if __name__ == "__main__":
                 text = page_mu.get_text()
                 if "Game Results" in text: #新たな試合
                     print(f"Game Results page: {page_num}")
-                    """
-                    try:
-                        scores = extract_game_result(page)   #得点表のdf
-                        print(scores)
-                        #break
-                    except Exception as e:
-                        print(e)
-                        #break
-                    """
+                    
                     scores = extract_game_result(page_plumber) #得点表のdf
                     print(scores)
                     hammers = get_hammer(scores, IS_MD)  #各エンドのハンマー情報

@@ -2,6 +2,7 @@ from ultralytics import YOLO
 import numpy as np
 import cv2
 import os
+from pathlib import Path
 
 WIDTH = 299
 TEE_LINE = 159.5
@@ -25,11 +26,11 @@ def get_stones_pos(img, model) -> np.ndarray:
     """
         ストーン座標をモデルを用いて取得する
         Args:
-            img_path : シート画像のファイルパス
+            img : シート画像のnumpy配列
+            model : YOLOのモデル
         Returns:
             np.ndarray : (16 x 6)のストーン情報の配列
     """
-    #img = cv2.imread(img_path)
     #必要であれば反転
     row20 = img[20,:,:]
     black_pixels = np.all(row20==0, axis=1) 
@@ -116,7 +117,7 @@ def get_hammer_img(img_path, is_md=False, game=None) -> str:
         else:
             return "yellow"
 
-def create_pseudo_label(model: YOLO, image_dir, output_dir, threshold=0.8) -> None:
+def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshold=0.8) -> None:
     """
         既存のモデルを用いて予測を行い、疑似ラベルを生成する
         Args:
@@ -127,7 +128,7 @@ def create_pseudo_label(model: YOLO, image_dir, output_dir, threshold=0.8) -> No
     imgs = [img for img in os.listdir(image_dir) if img.endswith(".png")]
     for img_path in imgs:
         print(img_path)
-        img_path = os.path.join(image_dir, img_path)
+        img_path = image_dir / img_path
 
         # 推論（OpenCV画像データを直接渡す）
         results = model.predict(
@@ -161,19 +162,16 @@ def create_pseudo_label(model: YOLO, image_dir, output_dir, threshold=0.8) -> No
             continue
         else:
             # ファイル名を保存用に使う
-            img_file = os.path.basename(img_path)
-            txt_file = f"{os.path.splitext(img_file)[0]}.txt"
-            with open(os.path.join(output_dir, txt_file), "w") as f:
+            #img_file = os.path.basename(img_path)
+            img_file = img_path.name
+            #txt_file = f"{os.path.splitext(img_file)[0]}.txt"
+            txt_file = Path(img_file).with_suffix(".txt").name
+            with open(output_dir / txt_file, "w") as f:
                 for txt in txt_data:
                     line = " ".join(map(str, txt))
                     f.write(line + "\n")
-
-class MyYOLO(YOLO):
-    def fine_tune(self, ) -> None:
-        self.train()
-        #訓練を行う。
-        return
         
 if __name__ == "__main__":
-    model = YOLO("complete_model/game10_2_retrain.pt")
-    get_hammer_img("rb_data/data_md/WMDCC2024/WMDCC2024_ResultsBook-12_5.png", model)
+    model = YOLO("complete_model/base.pt")
+    #get_hammer_img("rb_data/data_md/WMDCC2024/WMDCC2024_ResultsBook-12_5.png", model)
+    create_pseudo_label(model, image_dir=Path("tmp"), output_dir=Path("yolo_dataset"), threshold=0.75)

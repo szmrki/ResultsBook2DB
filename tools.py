@@ -8,7 +8,6 @@ import pdfplumber
 import yaml
 import random
 import shutil
-from pathlib import Path
 
 def extract_shotbyshot(doc, page, model, is_MD = False) -> tuple[np.ndarray, 
                                                                  list[dict[str, int, str, str, str, int]]]:
@@ -327,11 +326,11 @@ def split_train_val(image_dir: Path, label_dir: Path, train_ratio=0.8, seed=42) 
     for img_name in images:
         base = os.path.splitext(img_name)[0]
         lbl_name = base + ".txt"
-        img_path = os.path.join(image_dir, img_name)
-        lbl_path = os.path.join(label_dir, lbl_name)
+        img_path = image_dir / img_name
+        lbl_path = label_dir / lbl_name
 
         # ラベルが無い場合はスキップ
-        if not os.path.exists(lbl_path):
+        if not lbl_path.exists():
             print(f"[警告] ラベルが無いためスキップ: {img_name}")
             continue
 
@@ -344,8 +343,8 @@ def split_train_val(image_dir: Path, label_dir: Path, train_ratio=0.8, seed=42) 
             dst_lbl = val_lbl_dir
 
         # ファイル移動
-        shutil.move(img_path, os.path.join(dst_img, img_name))
-        shutil.move(lbl_path, os.path.join(dst_lbl, lbl_name))
+        shutil.move(img_path, dst_img / img_name)
+        shutil.move(lbl_path, dst_lbl / lbl_name)
 
 def create_yaml(
         save_path: Path,
@@ -383,7 +382,6 @@ def delete_files(dir) -> None:
     for file in Path(dir).iterdir():
         if file.is_file():
             file.unlink()
-
 
 # 数値に変換できるものは int、できないものはそのまま
 def __try_int(x):
