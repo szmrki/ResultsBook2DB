@@ -10,3 +10,4 @@ runs/
 inference.py
 *.png
 *.zip
+*.pt

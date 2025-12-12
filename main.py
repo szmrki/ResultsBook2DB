@@ -384,7 +384,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
 
         # 3. Workerスレッドを作成
-        self.worker = Worker(self.full_path, tournament_name)
+        self.worker = Worker(self.full_path, tournament_name, db_path)
 
         # 4. シグナル（通信）を接続
         self.worker.progress_signal.connect(self.update_progress)
