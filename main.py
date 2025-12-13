@@ -102,7 +102,7 @@ class FileDropLabel(QLabel):
         if file_name:
             self.process_file(file_name)
 
-    # ★追加: ドロップとクリックの共通処理
+    # ドロップとクリックの共通処理
     def process_file(self, file_path) -> None:
         import os
         self.setText(f"選択完了:\n{os.path.basename(file_path)}")
@@ -225,10 +225,10 @@ class DatabaseSelector(QWidget):
 
     def get_active_db_path(self):
         """
-        現在選択されているモードに基づいて、
-        「データベースの絶対パス」を返す。
-        戻り値: (path_string, is_new_bool)
-        エラー時: (None, is_new_bool)
+            現在選択されているモードに基づいて、
+            「データベースの絶対パス」を返す。
+            戻り値: (path_string, is_new_bool)
+            エラー時: (None, is_new_bool)
         """
         if self.radio_existing.isChecked():
             # 既存モード
@@ -277,9 +277,14 @@ class MainWindow(QMainWindow):
         
         # メインレイアウトにフォームを追加
         layout.addLayout(form_layout)
-        layout.addSpacing(20)
+        layout.addSpacing(10)
 
-        #　DB選択エリアを追加
+        #MDかどうかのラジオボタン
+        md_layout = self.__set_radio_button("4人制", "MD", default=0)
+        layout.addLayout(md_layout)
+        layout.addSpacing(10)
+
+        # DB選択エリアを追加
         self.db_selector = DatabaseSelector()
         layout.addWidget(self.db_selector)
 
@@ -323,6 +328,7 @@ class MainWindow(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(False)
         # レイアウトの適当な場所に追加してください（ボタンの下など）
         layout.addWidget(self.progress_bar) 
         
@@ -332,13 +338,17 @@ class MainWindow(QMainWindow):
         layout.addStretch()
 
     def update_file_path(self, path) -> None:
-            """ドロップエリアからパスを受け取る"""
-            self.full_path = path
-            path = os.path.basename(path)
-            self.path_display.setText(path)
+        """
+            ドロップエリアからパスを受け取る
+        """
+        self.full_path = path
+        path = os.path.basename(path)
+        self.path_display.setText(path)
 
     def start_analysis(self) -> None:
-        """解析開始ボタンが押されたときの処理"""
+        """
+            解析開始ボタンが押されたときの処理
+        """
         tournament_name = self.tournament_input.text().strip()
 
         # 入力チェック
@@ -357,7 +367,7 @@ class MainWindow(QMainWindow):
             return
 
         if is_new:
-            # 既に同名ファイルがあるかチェックする親切設計
+            # 既に同名ファイルがあるかチェックする
             if os.path.exists(db_path):
                 ret = QMessageBox.question(self, "上書き確認", 
                     f"ファイルが既に存在します。\n上書きしますか？\n{db_path}",
@@ -390,9 +400,29 @@ class MainWindow(QMainWindow):
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.finished_signal.connect(self.analysis_finished)
         self.worker.error_signal.connect(self.analysis_error)
+        self.worker.visible_signal.connect(self.progress_bar.setVisible)
 
-        # 5. スレッド開始！
+        # 5. スレッド開始
         self.worker.start()
+    
+    def __set_radio_button(self, txt1, txt2, default=0) -> QHBoxLayout:
+        mode_layout = QHBoxLayout()
+        radio1 = QRadioButton(txt1)
+        radio2 = QRadioButton(txt2)
+
+        if default == 0:
+            radio1.setChecked(True)
+        else:
+            radio2.setChecked(True)
+        
+        btn_group = QButtonGroup()
+        btn_group.addButton(radio1)
+        btn_group.addButton(radio2)
+
+        mode_layout.addWidget(radio1)
+        mode_layout.addWidget(radio2)
+
+        return mode_layout
 
     # --- 以下、スレッドから呼ばれる関数 ---
     def update_progress(self, val, msg):
