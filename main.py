@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                              QFileDialog, QMessageBox, QFormLayout, QGroupBox, 
                              QRadioButton, QButtonGroup, QProgressBar)
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from pathlib import Path
 from create_db import set_tables
 from worker import Worker
@@ -254,6 +254,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("ResultsBook2DB")
         self.setGeometry(100, 100, 500, 200)
+        self.setFixedWidth(500)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -324,12 +325,11 @@ class MainWindow(QMainWindow):
         self.run_button.clicked.connect(self.start_analysis)
         layout.addWidget(self.run_button)
 
-        # ★プログレスバーを追加（最初は隠しておく手もあり）
+        # プログレスバーを追加、最初は隠しておく
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(False)
-        # レイアウトの適当な場所に追加してください（ボタンの下など）
         layout.addWidget(self.progress_bar) 
         
         self.worker = None # スレッド保持用変数
@@ -386,7 +386,7 @@ class MainWindow(QMainWindow):
             f"以下の情報で解析を開始します。\n\n"
             f"大会名: {tournament_name}\n"
             f"ファイル: {os.path.basename(self.full_path)}\n\n"
-            f"(※ここにYOLOの処理スレッドを接続します)"
+            f"データベース: {os.path.basename(db_path)}"
         )
 
         # 2. UIを「処理中モード」にする
@@ -400,7 +400,7 @@ class MainWindow(QMainWindow):
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.finished_signal.connect(self.analysis_finished)
         self.worker.error_signal.connect(self.analysis_error)
-        self.worker.visible_signal.connect(self.progress_bar.setVisible)
+        self.worker.visible_signal.connect(self.progress_bar_set_visible)
 
         # 5. スレッド開始
         self.worker.start()
@@ -425,24 +425,40 @@ class MainWindow(QMainWindow):
         return mode_layout
 
     # --- 以下、スレッドから呼ばれる関数 ---
-    def update_progress(self, val, msg):
-        """進捗バーとメッセージを更新"""
+    def update_progress(self, val, msg) -> None:
+        """
+            進捗バーとメッセージを更新
+        """
         self.progress_bar.setValue(val)
         self.statusBar().showMessage(msg) # ステータスバーがある場合
         # またはラベル等のテキストを更新
 
-    def analysis_finished(self, msg):
-        """完了時の処理"""
+    def analysis_finished(self, msg) -> None:
+        """
+            完了時の処理
+        """
         self.run_button.setEnabled(True) # ボタンを復活
-        QMessageBox.information(self, "完了", msg)
+        QMessageBox.information(self, "Complete", msg)
         self.progress_bar.setValue(100)
         self.worker = None # 後始末
 
-    def analysis_error(self, err_msg):
-        """エラー時の処理"""
+    def analysis_error(self, err_msg) -> None:
+        """
+            エラー時の処理
+        """
         self.run_button.setEnabled(True)
-        QMessageBox.critical(self, "エラー", err_msg)
+        QMessageBox.critical(self, "Error", err_msg)
         self.worker = None
+
+    def progress_bar_set_visible(self, visible: bool) -> None:
+        """
+            プログレスバーの表示/非表示切替
+        """
+        self.progress_bar.setVisible(visible)
+        # 非表示の時だけウィンドウを縮める
+        if not visible:
+            QTimer.singleShot(0, self.adjustSize)
+
 
 # アプリケーション起動
 if __name__ == "__main__":

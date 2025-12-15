@@ -24,39 +24,25 @@ class Worker(QThread):
         try:
             # --- 処理開始の通知 ---
             self.visible_signal.emit(True)
-            self.progress_signal.emit(0, "PDFを読み込んでいます...")
+            self.progress_signal.emit(0, "Loading...")
             
-            # 【ここにご自身の既存ロジックを組み込みます】
-            # 例: pdf_images = convert_from_path(self.pdf_path)
+            # 処理本体
             self.conn = sqlite3.connect(self.db_path)
             #self.progress_signal.emit(0, "解析中...")
             self.executemodel(self.tournament_name, self.pdf_path)
             self.conn.close()
-            
-            """
-            # ↓↓↓ ダミー処理（実装時はここを消してYOLOコードに置き換え） ↓↓↓
-            total_steps = 5
-            for i in range(total_steps):
-                time.sleep(1) # 重い処理のシミュレーション
-                
-                # 進捗を通知 (例: 20%, 40%...)
-                progress = int((i + 1) / total_steps * 100)
-                self.progress_signal.emit(progress, f"ページ {i+1} を解析中...")
-            self.progress_signal.emit(100, "解析が完了しました。DBに保存しています...")
-            # ↑↑↑ ダミー処理 ここまで ↑↑↑
-            """
 
             # 処理完了
-            self.progress_signal.emit(100, "解析が完了しました。DBに保存しています...")
+            self.progress_signal.emit(100, "Complete")
             time.sleep(1)
-            self.finished_signal.emit("すべての解析とDB保存が完了しました！")
+            self.finished_signal.emit("Saved to DB successfully.")
             self.visible_signal.emit(False)
             self.progress_signal.emit(0, "")
 
         except Exception as e:
             # エラーが起きたら詳細を画面に送る
             error_msg = traceback.format_exc()
-            self.error_signal.emit(f"エラーが発生しました:\n{e}\n{error_msg}")
+            self.error_signal.emit(f"An error has occurred.\n{e}\n{error_msg}")
 
     def executemodel(self, game, file_path, is_MD=False) -> None:
         """
@@ -79,7 +65,6 @@ class Worker(QThread):
         cur.execute('INSERT INTO event(name) VALUES (?)', (game,)) #eventテーブルに大会の名前を記述
         event_id = cur.lastrowid #event_idを取得
 
-        #file_path = glob.glob(f"{game}/*.pdf")[0]
         doc = fitz.open(file_path)
         print(file_path)
 
@@ -88,7 +73,7 @@ class Worker(QThread):
         game_pt = model_dir / f"{game}.pt"
         if not game_pt.exists():
         #if False:
-            self.progress_signal.emit(0, "ファインチューニング準備中...")
+            self.progress_signal.emit(0, "Preparing fine-tuning...")
             model = YOLO(model_dir / "base.pt") #ベースモデルを選択
         
             ### PDFファイルから画像を400枚程度抽出し、予測を行い疑似ラベルを生成
@@ -101,12 +86,11 @@ class Worker(QThread):
             split_train_val(image_dir, label_dir, train_ratio=0.8)
             create_yaml(yaml_path, dataset_dir)
 
-            # --- コールバック関数をここで定義 ---
+            # コールバック関数を定義 ---
             def on_train_epoch_end(trainer):
                 curr = trainer.epoch + 1
                 total = trainer.epochs
-                # ★ selfを使ってシグナルを送る
-                self.progress_signal.emit(int(curr/total*100), "ファインチューニング中...")
+                self.progress_signal.emit(int(curr/total*100), "Fine-tuning...")
 
             # コールバック登録
             model.add_callback("on_train_epoch_end", on_train_epoch_end)
@@ -139,14 +123,14 @@ class Worker(QThread):
             # 後始末
             model.clear_callback("on_train_epoch_end")
 
-            self.progress_signal.emit(100, "ファインチューニング完了")
+            self.progress_signal.emit(100, "Fine-tuning complete.")
         else: pass
         #break
         model = YOLO(game_pt) #ファインチューニング済みモデルをロード
 
         with pdfplumber.open(file_path) as pdf:
             for pn in range(doc.page_count):
-                self.progress_signal.emit(int(pn/doc.page_count*100), "解析中...")
+                self.progress_signal.emit(int(pn/doc.page_count*100), "Extracting data...")
                 page_num = pn + 1
                 page_plumber = pdf.pages[pn]
                 page_mu = doc[pn]
