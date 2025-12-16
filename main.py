@@ -266,25 +266,8 @@ class MainWindow(QMainWindow):
         self.full_path = None
 
         # ---------------------------------------------------------
-        # 入力フォームエリア (大会名 & PDF選択)
+        # 入力エリア
         # ---------------------------------------------------------
-        form_layout = QFormLayout()
-        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight) # ラベルを右寄せ
-
-        # 大会名入力
-        self.tournament_input = QLineEdit()
-        self.tournament_input.setPlaceholderText("e.g.: WWCC2025")
-        form_layout.addRow("Event Name:", self.tournament_input)
-        
-        # メインレイアウトにフォームを追加
-        layout.addLayout(form_layout)
-        layout.addSpacing(10)
-
-        #MDかどうかのラジオボタン
-        md_layout = self.__set_radio_button("4人制", "MD", default=0)
-        layout.addLayout(md_layout)
-        layout.addSpacing(10)
-
         # DB選択エリアを追加
         self.db_selector = DatabaseSelector()
         layout.addWidget(self.db_selector)
@@ -300,6 +283,25 @@ class MainWindow(QMainWindow):
         self.path_display.setPlaceholderText("ファイルパスがここに表示されます")
         self.path_display.setReadOnly(True)
         layout.addWidget(self.path_display)
+
+        form_layout = QFormLayout()
+        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight) # ラベルを右寄せ
+
+        # 大会名入力
+        self.tournament_input = QLineEdit()
+        self.tournament_input.setPlaceholderText("e.g.: WWCC2025")
+        self.path_display.textChanged.connect(self.set_pred_text)
+        form_layout.addRow("Event Name:", self.tournament_input)
+        
+        # メインレイアウトにフォームを追加
+        layout.addLayout(form_layout)
+        layout.addSpacing(10)
+
+        #MDかどうかのラジオボタン
+        md_layout, md_btn_group = self.__set_radio_button("4人制", "MD", default=0)
+        self.is_md = False #デフォルトは4人制
+        layout.addLayout(md_layout)
+        md_btn_group.idClicked.connect(self.md_clicked)
 
         # ---------------------------------------------------------
         # 実行アクションエリア
@@ -385,8 +387,9 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "確認", 
             f"以下の情報で解析を開始します。\n\n"
             f"大会名: {tournament_name}\n"
-            f"ファイル: {os.path.basename(self.full_path)}\n\n"
-            f"データベース: {os.path.basename(db_path)}"
+            f"ファイル: {os.path.basename(self.full_path)}\n"
+            f"データベース: {os.path.basename(db_path)}\n"
+            f"形式: {'MD' if self.md_btn_group.checkedId() == 1 else '4人制'}"
         )
 
         # 2. UIを「処理中モード」にする
@@ -394,7 +397,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
 
         # 3. Workerスレッドを作成
-        self.worker = Worker(self.full_path, tournament_name, db_path)
+        self.worker = Worker(self.full_path, tournament_name, db_path, self.is_md)
 
         # 4. シグナル（通信）を接続
         self.worker.progress_signal.connect(self.update_progress)
@@ -405,7 +408,7 @@ class MainWindow(QMainWindow):
         # 5. スレッド開始
         self.worker.start()
     
-    def __set_radio_button(self, txt1, txt2, default=0) -> QHBoxLayout:
+    def __set_radio_button(self, txt1, txt2, default=0) -> tuple[QHBoxLayout, QButtonGroup]:
         mode_layout = QHBoxLayout()
         radio1 = QRadioButton(txt1)
         radio2 = QRadioButton(txt2)
@@ -415,14 +418,38 @@ class MainWindow(QMainWindow):
         else:
             radio2.setChecked(True)
         
-        btn_group = QButtonGroup()
-        btn_group.addButton(radio1)
-        btn_group.addButton(radio2)
+        btn_group = QButtonGroup(self)
+        btn_group.addButton(radio1, 0)
+        btn_group.addButton(radio2, 1)
 
         mode_layout.addWidget(radio1)
         mode_layout.addWidget(radio2)
 
-        return mode_layout
+        return mode_layout, btn_group
+    
+    def md_clicked(self, button_id) -> None:
+        """
+            ラジオボタンが切り替わった時に呼ばれる処理
+        """
+        if button_id == 0:
+            self.is_md = False    
+            #print(self.is_md)
+        elif button_id == 1:
+            self.is_md = True
+            #print(self.is_md)
+
+    def set_pred_text(self) -> None:
+        """
+            予測大会名を設定する
+            大会名は大文字略称＋年度＋(Men or Woomen)
+        """
+        path = self.path_display.text()
+        text = path.split('_')[0].upper()
+        if "Men" in path:
+            text += "Men"
+        elif "Women" in path:
+            text += "Women"
+        self.tournament_input.setText(text)
 
     # --- 以下、スレッドから呼ばれる関数 ---
     def update_progress(self, val, msg) -> None:

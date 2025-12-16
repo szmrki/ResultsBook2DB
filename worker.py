@@ -11,11 +11,12 @@ class Worker(QThread):
     error_signal = Signal(str)          # エラー発生時のメッセージ
     visible_signal = Signal(bool)      # プログレスバーの表示/非表示
 
-    def __init__(self, pdf_path, tournament_name, db_path) -> None:
+    def __init__(self, pdf_path, tournament_name, db_path, is_md=False) -> None:
         super().__init__()
         self.pdf_path = pdf_path
         self.tournament_name = tournament_name
         self.db_path = db_path
+        self.is_md = is_md
 
     def run(self) -> None:
         """
@@ -29,7 +30,7 @@ class Worker(QThread):
             # 処理本体
             self.conn = sqlite3.connect(self.db_path)
             #self.progress_signal.emit(0, "解析中...")
-            self.executemodel(self.tournament_name, self.pdf_path)
+            self.executemodel(self.tournament_name, self.pdf_path, self.is_md)
             self.conn.close()
 
             # 処理完了
