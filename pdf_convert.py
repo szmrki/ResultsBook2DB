@@ -18,11 +18,9 @@ def executemodel(game, file_path, conn: sqlite3.connect, is_MD=False) -> None:
     """
     #color2num = {"red": 0, "yellow": 1}
     num2color = {0: "red", 1: "yellow"}
-    work_dir = Path.cwd()
-    model_dir = work_dir / "complete_model"
 
     cur = conn.cursor()
-    cur.execute('INSERT INTO event(name) VALUES (?)', (game,)) #eventテーブルに大会の名前を記述
+    cur.execute('INSERT INTO events(name) VALUES (?)', (game,)) #eventテーブルに大会の名前を記述
     event_id = cur.lastrowid #event_idを取得
 
     #file_path = glob.glob(f"{game}/*.pdf")[0]
@@ -131,8 +129,6 @@ def executemodel(game, file_path, conn: sqlite3.connect, is_MD=False) -> None:
                 if stones_end.shape[0] != len(shot_info):
                     print("num images: ", stones_end.shape[0])
                     break
-                
-                #if page_num == 146: break
 
                 for shot_num, (stones, info) in enumerate(zip(stones_end, shot_info), start=1):
                     shot_type = info["type"]; percent_score = info["score"]
@@ -166,8 +162,8 @@ if __name__ == "__main__":
     #print(work_dir)
     model_dir = work_dir / "complete_model"
     db_dir = work_dir / "db"
-    dbname = db_dir / "curling_stones_md_v5.db" if IS_MD else db_dir / "curling_stones_4p_v8.db"
-    dbname = db_dir / "fordebug.db"
+    dbname = db_dir / "curling_stones_md_v5.db" if IS_MD else db_dir / "curling_stones_4p_v9.db"
+    #dbname = db_dir / "fordebug.db"
     #print(dbname)
     conn = sqlite3.connect(dbname)
     #cur = conn.cursor()
@@ -187,7 +183,7 @@ if __name__ == "__main__":
              #"PCCC2024Men", "PCCC2024Women", "PCCC2025Men", "PCCC2025Women",
              #"WJCC2022Men", "WJCC2022Women", "WJCC2023Men", "WJCC2023Women",
              #"WMCC2022", "WMCC2023", "WMCC2024", "WMCC2025", "WWCC2022", "WWCC2023", "WWCC2024", "WWCC2025"]
-    games = ["ECC2023Men", "ECC2023Women"]
+    #games = ["ECC2023Men", "ECC2023Women"]
     #count = 0; count2 = 0
     for game in games:
         file_path = glob.glob(f"{game}/*.pdf")[0]

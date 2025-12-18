@@ -6,10 +6,10 @@ def set_tables(dbname):
     conn = sqlite3.connect(dbname)
     cur = conn.cursor()
     cur.execute(
-        'CREATE TABLE event(id INTEGER PRIMARY KEY AUTOINCREMENT, name STRING NOT NULL, start_date DATE, end_date DATE)'
+        'CREATE TABLE events(id INTEGER PRIMARY KEY AUTOINCREMENT, name STRING NOT NULL UNIQUE)'
         )
     cur.execute(
-        'CREATE TABLE games(id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER NOT NULL, page INTEGER, session STRING, name STRING, date DATE,team_red STRING, team_yellow STRING,final_score_red INTEGER,final_score_yellow INTEGER)'
+        'CREATE TABLE games(id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER NOT NULL, page INTEGER, team_red STRING, team_yellow STRING,final_score_red INTEGER,final_score_yellow INTEGER)'
     )
     cur.execute(
         'CREATE TABLE ends(id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL, page INTEGER, number INTEGER, color_hammer STRING, score_red INTEGER, score_yellow INTEGER)'

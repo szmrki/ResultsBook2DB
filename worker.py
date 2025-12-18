@@ -63,7 +63,7 @@ class Worker(QThread):
         model_dir = work_dir / "complete_model"
 
         cur = self.conn.cursor()
-        cur.execute('INSERT INTO event(name) VALUES (?)', (game,)) #eventテーブルに大会の名前を記述
+        cur.execute('INSERT INTO events(name) VALUES (?)', (game,)) #eventテーブルに大会の名前を記述
         event_id = cur.lastrowid #event_idを取得
 
         doc = fitz.open(file_path)
@@ -123,7 +123,6 @@ class Worker(QThread):
 
             # 後始末
             model.clear_callback("on_train_epoch_end")
-
             self.progress_signal.emit(100, "Fine-tuning complete.")
         else: pass
         #break
@@ -188,8 +187,6 @@ class Worker(QThread):
                     if stones_end.shape[0] != len(shot_info):
                         print("num images: ", stones_end.shape[0])
                         break
-                    
-                    #if page_num == 146: break
 
                     for shot_num, (stones, info) in enumerate(zip(stones_end, shot_info), start=1):
                         shot_type = info["type"]; percent_score = info["score"]
