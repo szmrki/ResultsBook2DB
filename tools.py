@@ -9,15 +9,14 @@ import yaml
 import random
 import shutil
 
-def extract_shotbyshot(doc, page, model, is_MD = False) -> tuple[np.ndarray, 
-                                                                 list[dict[str, int, str, str, str, int]]]:
+def extract_shotbyshot(doc, page, model) -> tuple[np.ndarray, 
+                                                list[dict[str, int, str, str, str, int]]]:
     """
         ページからショットバイショット画像を抽出するメソッド
         Args:
             doc : PyMuPDFのオブジェクト
             page : PyMuPDFのページオブジェクト
             model : ストーン検出モデル
-            is_MD : MDかどうか
         Returns:
             tuple[np.ndarray, list[tuple[str, str, str, str, int]]] : 
                 ストーン座標の配列（num_shots x 16 x 6）とショット情報のリスト
@@ -107,7 +106,7 @@ def extract_game_result(page) -> pd.DataFrame:
 
 def __get_shot_info(all_texts) -> list[dict[str, int, str, str, str, int]]:
     """
-        ショットバイショットのテキスト情報から特定の投球の情報を取得するメソッド
+        ショットバイショットのテキスト情報から特定の投球の情報を取得する
         Args:     
             all_texts : ショットバイショットのすべてのテキスト情報のリスト
             #is_MD : MDかどうか
@@ -168,7 +167,7 @@ def __get_shot_info(all_texts) -> list[dict[str, int, str, str, str, int]]:
 
 def get_hammer(scores, is_md=False) -> list[int]: 
     """
-        スコア表ベースでエンドごとのハンマーのindexを取得するメソッド
+        スコア表ベースでエンドごとのハンマーのindexを取得する
         Args:
             score : スコア表のデータフレーム
             is_md : MDのときはハンマーの取得方法が変わる
@@ -193,14 +192,6 @@ def get_hammer(scores, is_md=False) -> list[int]:
     total_ends = non_empty.sum()
 
     for end in range(1, total_ends):
-        """
-        if end <= MAX_END:
-            str_end = str(end)
-        else:
-            extra_num = end - MAX_END
-            col_idx = scores.columns.get_loc(str(MAX_END)) 
-            str_end = scores.columns[col_idx + extra_num]     # 右隣の列名
-        """
         str_end = str(end)
         try:
             if int(scores.at[0, str_end]) > int(scores.at[1, str_end]): #team0が得点した場合
@@ -237,7 +228,7 @@ def save_images(doc: fitz.open, output_dir: Path, save_num: int) -> None:
                 img = img["img"]
                 img[:20,1:-2] = 255
                 img[-19:,1:-2] = 255 #白マスク
-                cv2.imwrite(os.path.join(output_dir, f"page{pn+1}_{i}.png"), img)
+                cv2.imwrite(output_dir / f"page{pn+1}_{i}.png", img)
 
             num_images += len(shotbyshot_list)
             if num_images >= save_num: break
@@ -284,6 +275,8 @@ def __extract_images(doc: fitz.open, page) -> tuple[list, list]:
         xref = img[0]
         pix = fitz.Pixmap(doc, xref)
         img = __pixmap2cv2(pix)
+        if __black_more_than_white(img):
+            img = 255 - img  #反転
 
         shotbyshot_list.append({
             "img": img,
@@ -313,12 +306,6 @@ def split_train_val(image_dir: Path, label_dir: Path, train_ratio=0.8, seed=42) 
     val_img_dir.mkdir(parents=True, exist_ok=True)
     train_lbl_dir.mkdir(parents=True, exist_ok=True)
     val_lbl_dir.mkdir(parents=True, exist_ok=True)
-    """
-    os.makedirs(train_img_dir, exist_ok=True)
-    os.makedirs(val_img_dir, exist_ok=True)
-    os.makedirs(train_lbl_dir, exist_ok=True)
-    os.makedirs(val_lbl_dir, exist_ok=True)
-    """
 
     # 画像一覧取得（.png限定）
     images = [f for f in os.listdir(image_dir) if f.endswith(".png")]
@@ -360,6 +347,7 @@ def create_yaml(
             train : 訓練画像のパス
             val : 検証画像のパス
     """
+    save_path.parent.mkdir(parents=True, exist_ok=True)
     names = ["red", "yellow"]
 
     yaml_dict = {
@@ -459,6 +447,27 @@ def __pixmap2cv2(pix: fitz.Pixmap) -> np.ndarray:
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
     
     return img
+
+def __black_more_than_white(image_array: np.ndarray) -> bool:
+    """
+        画像内の白(255, 255, 255)と黒(0, 0, 0)のピクセル数を比較する
+        Args:
+            image_array : 画像のnumpy配列
+        Returns:
+            bool : 黒≧白ならTrue、そうでなければFalse
+    """
+    # 白ピクセルの判定: 各ピクセルの(R,G,B)がすべて255であるか
+    white_pixels = np.all(image_array == [255, 255, 255], axis=-1)
+    white_count = np.sum(white_pixels)
+    
+    # 黒ピクセルの判定: 各ピクセルの(R,G,B)がすべて0であるか
+    black_pixels = np.all(image_array == [0, 0, 0], axis=-1)
+    black_count = np.sum(black_pixels)
+    
+    if white_count >= black_count:
+        return False
+    else:
+        return True
     
 if __name__ == "__main__":
     work_dir = Path.cwd()
@@ -473,12 +482,15 @@ if __name__ == "__main__":
     delete_files(label_dir / "train")
     delete_files(image_dir / "val")
     delete_files(label_dir / "val")
-
-    file_path = Path("rb_data/data_4p/WWCC2025/WWCC2025_ResultsBook.pdf")
-    doc = fitz.open(file_path)
     
+    file_path = Path("rb_data/data_4p/OWG2022/OWG2022_ResultsBook_4p.pdf")
+    #file_path = Path("rb_data/data_4p/ECC2023Men/ECC2023_ResultsBook_Men_A-Division.pdf")
+    doc = fitz.open(file_path)
+    """
     save_images(doc, output_dir=image_dir, save_num=500)
-    create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir, threshold=0.7)
+    create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir, threshold=0.75)
+    """
+    """
     split_train_val(image_dir, label_dir, train_ratio=0.8)
     create_yaml(yaml_path, dataset_dir)
 
@@ -492,7 +504,7 @@ if __name__ == "__main__":
         #save=False,
         exist_ok=True,
     )
-    game_pt = model_dir / "WWCC2025.pt"
+    game_pt = model_dir / "OWG2022.pt"
     try:
         #best.ptをcomplete_modelに移動し、大会名にリネーム
         if game_pt.is_file():
@@ -513,3 +525,23 @@ if __name__ == "__main__":
         print(m, metrics.box.map50, metrics.box.map)
     #scores = extract_game_result(page)
     #print(scores)
+    """
+    page = doc[12]
+    # --- ページ全体をレンダリング ---
+    scale = 1
+    matrix = fitz.Matrix(scale, scale)   
+    full_pix = page.get_pixmap(matrix=matrix)
+    test_img = __pixmap2cv2(full_pix)
+    """
+    img_list, _ = __extract_images(doc, page)
+    test_img = img_list[0]["img"]
+    #test_img = cv2.cvtColor(test_img, cv2.COLOR_RGB2BGR)
+    print("before", __black_more_than_white(test_img))
+    test_img = 255 - test_img
+    print("after", __black_more_than_white(test_img))
+    #test_img = test_img[..., ::-1]
+    print(test_img.shape)
+    """
+    cv2.imshow("test", test_img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()

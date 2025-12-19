@@ -103,7 +103,7 @@ class Worker(QThread):
                 imgsz=600,
                 iou=0.3,
                 conf=0.5,
-                save=False,
+                save=True,
                 exist_ok=True,
                 #verbose=False
             )
@@ -111,7 +111,9 @@ class Worker(QThread):
             Path(game_pt).unlink(missing_ok=True) #game_ptが存在する場合削除
             try:
                 #best.ptをcomplete_modelに移動し、大会名にリネーム
-                Path("runs/detect/train/weights/best.pt").rename(game_pt) 
+                #Path("runs/detect/train/weights/best.pt").rename(game_pt) 
+                #best.ptをcomplete_modelにコピーし、大会名にリネーム
+                shutil.copy2(Path("runs/detect/train/weights/best.pt"), game_pt)
             except FileNotFoundError:
                 model.save(game_pt)
             
@@ -177,7 +179,7 @@ class Worker(QThread):
                                     score_red, score_yellow))
                     end_id = cur.lastrowid #end_idを取得
                     print(f"Shot-by-Shot page: {page_num}")
-                    stones_end, shot_info = extract_shotbyshot(doc, page_mu, model, is_MD)
+                    stones_end, shot_info = extract_shotbyshot(doc, page_mu, model)
                     #print(stones_end[0])
                     #count += len(shot_info)
                     #count2 += stones_end.shape[0]

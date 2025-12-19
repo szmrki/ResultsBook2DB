@@ -147,7 +147,7 @@ def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshol
             cls = int(box.cls[0])
             x, y, w, h = box.xywhn[0]
             conf = float(box.conf[0])
-            if conf < threshold:   #全検出物体の確信度が0.8以上の画像を疑似ラベルとする
+            if conf < threshold:   #全検出物体の確信度が閾値以上の画像を疑似ラベルとする
                 skip_flag = True
                 break
             txt_data.append((cls, 
@@ -158,13 +158,12 @@ def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshol
                              ))
             
         if skip_flag: 
-            os.remove(img_path)
+            #os.remove(img_path)
+            img_path.unlink(missing_ok=True)
             continue
         else:
             # ファイル名を保存用に使う
-            #img_file = os.path.basename(img_path)
             img_file = img_path.name
-            #txt_file = f"{os.path.splitext(img_file)[0]}.txt"
             txt_file = Path(img_file).with_suffix(".txt").name
             with open(output_dir / txt_file, "w") as f:
                 for txt in txt_data:
@@ -174,4 +173,4 @@ def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshol
 if __name__ == "__main__":
     model = YOLO("complete_model/base.pt")
     #get_hammer_img("rb_data/data_md/WMDCC2024/WMDCC2024_ResultsBook-12_5.png", model)
-    create_pseudo_label(model, image_dir=Path("tmp"), output_dir=Path("yolo_dataset"), threshold=0.75)
+    create_pseudo_label(model, image_dir=Path("tmp/tmp2"), output_dir=Path("yolo_dataset"), threshold=0.75)

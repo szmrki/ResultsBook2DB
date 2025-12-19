@@ -183,7 +183,7 @@ class DatabaseSelector(QWidget):
         # B. ファイル名入力
         filename_layout = QHBoxLayout()
         self.filename_input = QLineEdit()
-        self.filename_input.setPlaceholderText("例: curling_match_2025")
+        #self.filename_input.setPlaceholderText("例: curling_match_2025")
         
         # 拡張子ラベル (.db)
         ext_label = QLabel(".db")
@@ -298,10 +298,10 @@ class MainWindow(QMainWindow):
         layout.addSpacing(10)
 
         #MDかどうかのラジオボタン
-        md_layout, md_btn_group = self.__set_radio_button("4人制", "MD", default=0)
+        md_layout, self.md_btn_group = self.__set_radio_button("4人制", "MD", default=0)
         self.is_md = False #デフォルトは4人制
         layout.addLayout(md_layout)
-        md_btn_group.idClicked.connect(self.md_clicked)
+        self.md_btn_group.idClicked.connect(self.md_clicked)
 
         # ---------------------------------------------------------
         # 実行アクションエリア
@@ -433,10 +433,8 @@ class MainWindow(QMainWindow):
         """
         if button_id == 0:
             self.is_md = False    
-            #print(self.is_md)
         elif button_id == 1:
             self.is_md = True
-            #print(self.is_md)
 
     def set_pred_text(self) -> None:
         """
