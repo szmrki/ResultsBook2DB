@@ -125,6 +125,7 @@ def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshol
             image_dir : 予測したい画像が格納されているディレクトリ名
             output_dir : ラベルの保存先
     """
+    output_dir.mkdir(parents=True, exist_ok=True)
     imgs = [img for img in os.listdir(image_dir) if img.endswith(".png")]
     for img_path in imgs:
         print(img_path)

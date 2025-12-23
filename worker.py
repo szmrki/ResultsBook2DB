@@ -3,6 +3,11 @@ import traceback
 from PySide6.QtCore import QThread, Signal
 import sqlite3
 from tools import *
+import sys
+
+resource_path = lambda p: Path(getattr(
+    sys, '_MEIPASS', os.path.abspath(os.path.dirname(__file__))
+    )) / p
 
 class Worker(QThread):
     # メインスレッド（画面）に情報を送るための「通信線」
@@ -29,14 +34,14 @@ class Worker(QThread):
             
             # 処理本体
             self.conn = sqlite3.connect(self.db_path)
-            #self.progress_signal.emit(0, "解析中...")
-            self.executemodel(self.tournament_name, self.pdf_path, self.is_md)
+            action = self.executemodel(self.tournament_name, self.pdf_path, self.is_md)
             self.conn.close()
 
-            # 処理完了
-            self.progress_signal.emit(100, "Complete")
-            time.sleep(1)
-            self.finished_signal.emit("Saved to DB successfully.")
+            if action:
+                # 処理完了
+                self.progress_signal.emit(100, "Complete")
+                time.sleep(1)
+                self.finished_signal.emit("Saved to DB successfully.")
             self.visible_signal.emit(False)
             self.progress_signal.emit(0, "")
 
@@ -44,8 +49,9 @@ class Worker(QThread):
             # エラーが起きたら詳細を画面に送る
             error_msg = traceback.format_exc()
             self.error_signal.emit(f"An error has occurred.\n{e}\n{error_msg}")
+            print(error_msg)
 
-    def executemodel(self, game, file_path, is_MD=False) -> None:
+    def executemodel(self, game, file_path, is_MD=False) -> bool:
         """
             指定された大会フォルダ内のPDFを解析し、DBに情報を格納する。
             解析にはYOLOモデルを使用し、必要に応じてファインチューニングも行う。
@@ -55,15 +61,21 @@ class Worker(QThread):
                 file_path (str): PDFファイルのパス
                 is_MD (bool): MD版かどうかのフラグ
             Returns:
-                None
+                bool : 処理が成功したらTrue、失敗したらFalse
         """
         #color2num = {"red": 0, "yellow": 1}
         num2color = {0: "red", 1: "yellow"}
         work_dir = Path.cwd()
-        model_dir = work_dir / "complete_model"
+        model_dir = resource_path(Path("complete_model"))
 
         cur = self.conn.cursor()
-        cur.execute('INSERT INTO events(name) VALUES (?)', (game,)) #eventテーブルに大会の名前を記述
+        try:    
+            cur.execute('INSERT INTO events(name) VALUES (?)', (game,)) #eventテーブルに大会の名前を記述
+        except sqlite3.IntegrityError:
+            self.conn.rollback()
+            self.finished_signal.emit("Event Name has already been used.")
+            return False
+
         event_id = cur.lastrowid #event_idを取得
 
         doc = fitz.open(file_path)
@@ -75,7 +87,7 @@ class Worker(QThread):
         if not game_pt.exists():
         #if False:
             self.progress_signal.emit(0, "Preparing fine-tuning...")
-            model = YOLO(model_dir / "base.pt") #ベースモデルを選択
+            model = YOLO(resource_path(model_dir / "base.pt")) #ベースモデルを選択
         
             ### PDFファイルから画像を400枚程度抽出し、予測を行い疑似ラベルを生成
             dataset_dir = work_dir / "yolo_dataset"
@@ -98,14 +110,15 @@ class Worker(QThread):
 
             ### 疑似ラベルを用いてモデルのファインチューニングを行う
             model.train(
-                data=yaml_path,    # データセット（train/val のパスを含む）
+                data=resource_path(yaml_path),    # データセット（train/val のパスを含む）
                 epochs=50,
                 imgsz=600,
                 iou=0.3,
                 conf=0.5,
                 save=True,
                 exist_ok=True,
-                #verbose=False
+                #verbose=False,
+                workers=0
             )
 
             Path(game_pt).unlink(missing_ok=True) #game_ptが存在する場合削除
@@ -211,3 +224,4 @@ class Worker(QThread):
                     continue
         doc.close()
         self.conn.commit()
+        return True

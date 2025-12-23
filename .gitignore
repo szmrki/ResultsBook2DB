@@ -11,3 +11,5 @@ inference.py
 *.png
 *.zip
 *.pt
+build/
+dist/

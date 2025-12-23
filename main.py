@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from pathlib import Path
 from create_db import set_tables
 from worker import Worker
+import multiprocessing
 
 # ---------------------------------------------------------
 # ドラッグ＆ドロップ専用のカスタムラベルを作成
@@ -487,6 +488,7 @@ class MainWindow(QMainWindow):
 
 # アプリケーション起動
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
