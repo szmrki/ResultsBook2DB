@@ -14,3 +14,5 @@ inference.py
 build/
 dist/
 complete_model/
+main_testing.spec
+pdf_convert.py

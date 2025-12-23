@@ -19,10 +19,10 @@ class FileDropLabel(QLabel):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setText("\nここにPDFファイルをドラッグ＆ドロップ\nまたはクリックして選択\n")
+        self.setText("\nここにPDFファイルをドラッグ&ドロップ\nまたはクリックして選択\n")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # マウスを乗せた時に「指マーク」にする（クリックできる感が出る）
+        # マウスを乗せた時に「指マーク」にする
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         
         # デザイン設定（点線の枠線、背景色など）
@@ -40,7 +40,7 @@ class FileDropLabel(QLabel):
             }
         """)
         
-        # ★ここが重要：ドロップを受け付ける設定
+        # ドロップを受け付ける設定
         self.setAcceptDrops(True)
 
     def dragEnterEvent(self, event) -> None:
@@ -51,7 +51,9 @@ class FileDropLabel(QLabel):
             self.setStyleSheet("""
                 QLabel {
                     border: 2px dashed #0078D7;
+                    border-radius: 10px;
                     background-color: #eaf4ff;
+                    font-size: 14px;
                 }
             """)
         else:
@@ -64,6 +66,7 @@ class FileDropLabel(QLabel):
                 border: 2px dashed #aaa;
                 border-radius: 10px;
                 background-color: #f9f9f9;
+                font-size: 14px;      
             }
         """)
 
@@ -76,18 +79,21 @@ class FileDropLabel(QLabel):
             
             # PDFかどうかの簡易チェック
             if file_path.lower().endswith('.pdf'):
-                self.setText(f"選択されたファイル:\n{os.path.basename(file_path)}")
+                self.setText(f"\nSelected File:\n{os.path.basename(file_path)}\n")
                 # 親ウィンドウにパスを通知
                 self.fileDropped.emit(file_path)
             else:
-                self.setText("エラー: PDFファイルのみ対応しています")
+                self.setText("\nError:\nPDFファイルのみ対応しています\n")
                 # デザインを戻す
                 self.setStyleSheet("""
                 QLabel {
                     border: 2px dashed red;
+                    border-radius: 10px;
                     background-color: #ffeeee;
+                    font-size: 14px;
                 }
                 """)
+                
 
     def mousePressEvent(self, event) -> None:
         """クリックされた時（必要ならここにファイル選択ダイアログ処理を書く）"""
@@ -105,8 +111,7 @@ class FileDropLabel(QLabel):
 
     # ドロップとクリックの共通処理
     def process_file(self, file_path) -> None:
-        import os
-        self.setText(f"選択完了:\n{os.path.basename(file_path)}")
+        self.setText(f"\nSelected File:\n{os.path.basename(file_path)}\n")
         # メインウィンドウに通知
         self.fileDropped.emit(file_path)
         print(file_path)
@@ -119,7 +124,7 @@ class DatabaseSelector(QWidget):
 
         # 全体をグループボックスで囲む
         main_layout = QVBoxLayout(self)
-        group_box = QGroupBox("データベース接続設定")
+        group_box = QGroupBox("Database Config")
         main_layout.addWidget(group_box)
         
         layout = QVBoxLayout(group_box)
@@ -383,7 +388,7 @@ class MainWindow(QMainWindow):
             print(f"既存接続モード: {db_path}")
 
         # -------------------------------------------------------
-        # ここでバックグラウンド処理(QThread)を開始します
+        # ここでバックグラウンド処理(QThread)を開始
         # -------------------------------------------------------
         QMessageBox.information(self, "確認", 
             f"以下の情報で解析を開始します。\n\n"

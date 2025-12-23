@@ -63,7 +63,6 @@ class Worker(QThread):
             Returns:
                 bool : 処理が成功したらTrue、失敗したらFalse
         """
-        #color2num = {"red": 0, "yellow": 1}
         num2color = {0: "red", 1: "yellow"}
         work_dir = Path.cwd()
         model_dir = resource_path(Path("complete_model"))
@@ -158,7 +157,7 @@ class Worker(QThread):
                     team_red = scores.at[0, "team"]
                     team_yellow = scores.at[1, "team"]
                     try:
-                        fin_red = int(scores.at[0, "Total"])
+                        fin_red = int(scores.at[0, "Total"]) #得点表のdfから最終得点を記録
                         fin_yellow = int(scores.at[1, "Total"])
                     except ValueError:
                         fin_red = None
@@ -174,10 +173,10 @@ class Worker(QThread):
                     #print(num_end)
                     str_end = str(num_end)
                     try:
-                        score_red = int(scores.at[0, str_end])
+                        score_red = int(scores.at[0, str_end]) #得点表のdfから得点を取得
                         score_yellow = int(scores.at[1, str_end])
                     except Exception:
-                        score_red = None
+                        score_red = None #存在しない場合はNULL
                         score_yellow = None
                     
                     try:
@@ -196,10 +195,6 @@ class Worker(QThread):
                     #count2 += stones_end.shape[0]
                     #print(shot_info)
                     print("num shots: ", len(shot_info))
-                    
-                    if stones_end.shape[0] != len(shot_info):
-                        print("num images: ", stones_end.shape[0])
-                        break
 
                     for shot_num, (stones, info) in enumerate(zip(stones_end, shot_info), start=1):
                         shot_type = info["type"]; percent_score = info["score"]
@@ -212,9 +207,10 @@ class Worker(QThread):
                         shot_id = cur.lastrowid #shot_idを取得
 
                         rows = [(shot_id, num2color[int(row[0])], *row[1:]) for row in stones if row[5] == 1]
-                        if len(rows) == 0:
+                        if len(rows) == 0: #ストーンが存在しない場合はidのみ
                             rows = [(shot_id, None, None, None, None, None, None)]
-                        cur.executemany("""INSERT INTO stones (shot_id, color, x, y, dist, 
+                        #ストーンはまとめてinsert
+                        cur.executemany("""INSERT INTO stones (shot_id, color, x, y, dist,  
                                         inhouse, insheet) VALUES (?, ?, ?, ?, ?, ?, ?)""", rows)
                     num_end += 1
                     #break
