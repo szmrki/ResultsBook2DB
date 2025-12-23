@@ -123,8 +123,6 @@ class Worker(QThread):
 
             Path(game_pt).unlink(missing_ok=True) #game_ptが存在する場合削除
             try:
-                #best.ptをcomplete_modelに移動し、大会名にリネーム
-                #Path("runs/detect/train/weights/best.pt").rename(game_pt) 
                 #best.ptをcomplete_modelにコピーし、大会名にリネーム
                 shutil.copy2(Path("runs/detect/train/weights/best.pt"), game_pt)
             except FileNotFoundError:
