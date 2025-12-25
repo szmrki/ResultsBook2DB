@@ -4,6 +4,7 @@ from PySide6.QtCore import QThread, Signal
 import sqlite3
 from tools import *
 import sys
+from itertools import zip_longest
 
 resource_path = lambda p: Path(getattr(
     sys, '_MEIPASS', os.path.abspath(os.path.dirname(__file__))
@@ -197,17 +198,26 @@ class Worker(QThread):
                     #print(shot_info)
                     print("num shots: ", len(shot_info))
 
-                    for shot_num, (stones, info) in enumerate(zip(stones_end, shot_info), start=1):
-                        shot_type = info["type"]; percent_score = info["score"]
-                        turn = info["turn"]; team = info["team"]; player_name = info["player"]
+                    for shot_num, (stones, info) in enumerate(zip_longest(stones_end, shot_info), start=1):
+                        if info is not None: #正常時
+                            shot_type = info["type"]; percent_score = info["score"]
+                            turn = info["turn"]; team = info["team"]; player_name = info["player"]      
+                        else: #ショット情報が取れない場合はNULLを挿入し、ストーン配置のみ保存する
+                            shot_type = None; percent_score = None
+                            turn = None; team = None; player_name = None
+
                         shot_color = num2color[(hammers[num_end - 1] + (shot_num % 2)) % 2] #現在のショットの色を指定
                         cur.execute("""INSERT INTO shots(end_id, number, color, team, player_name, 
-                                        type, turn, percent_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", 
-                                        (end_id, shot_num, shot_color, team, player_name, 
-                                        shot_type, turn, percent_score))
+                                            type, turn, percent_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", 
+                                            (end_id, shot_num, shot_color, team, player_name, 
+                                            shot_type, turn, percent_score))    
                         shot_id = cur.lastrowid #shot_idを取得
 
-                        rows = [(shot_id, num2color[int(row[0])], *row[1:]) for row in stones if row[5] == 1]
+                        if stones is not None: #正常時
+                            rows = [(shot_id, num2color[int(row[0])], *row[1:]) for row in stones if row[5] == 1]
+                        else: #ストーン情報が取れない場合
+                            rows = []
+
                         if len(rows) == 0: #ストーンが存在しない場合はidのみ
                             rows = [(shot_id, None, None, None, None, None, None)]
                         #ストーンはまとめてinsert
