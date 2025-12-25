@@ -25,9 +25,7 @@ class FileDropLabel(QLabel):
 
         # マウスを乗せた時に「指マーク」にする
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        
-        # デザイン設定（点線の枠線、背景色など）
-        self.setStyleSheet("""
+        self.init_label = """
             QLabel {
                 border: 2px dashed #aaa;
                 border-radius: 10px;
@@ -39,7 +37,10 @@ class FileDropLabel(QLabel):
                 background-color: #e0e0e0;
                 border-color: #0078D7;
             }
-        """)
+        """
+        
+        # デザイン設定（点線の枠線、背景色など）
+        self.setStyleSheet(self.init_label)
         
         # ドロップを受け付ける設定
         self.setAcceptDrops(True)
@@ -111,15 +112,28 @@ class FileDropLabel(QLabel):
     # ドロップとクリックの共通処理
     def process_file(self, file_path) -> None:
         self.setText(f"\nSelected File:\n{os.path.basename(file_path)}\n")
+        self.setStyleSheet("""
+            QLabel {
+                border: 2px dashed #0078D7;
+                border-radius: 10px;
+                background-color: #eaf4ff;
+                font-size: 14px;
+            }
+        """)
         # メインウィンドウに通知
         self.fileDropped.emit(file_path)
         print(file_path)
+    
+    def clear(self) -> None:
+        """ラベルを初期状態に戻す"""
+        self.setText("\nここにPDFファイルをドラッグ&ドロップ\nまたはクリックして選択\n")
+        self.setStyleSheet(self.init_label)
 
 #データベース
 class DatabaseSelector(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.current_folder = os.getcwd() # デフォルトはカレントディレクトリ
+        self.current_folder = str(Path.cwd()) # デフォルトはカレントディレクトリ
 
         # 全体をグループボックスで囲む
         main_layout = QVBoxLayout(self)
@@ -134,6 +148,8 @@ class DatabaseSelector(QWidget):
         mode_layout = QHBoxLayout()
         self.radio_existing = QRadioButton("既存のDBファイルを選択")
         self.radio_new = QRadioButton("新規作成")
+        self.radio_existing.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.radio_new.setCursor(Qt.CursorShape.PointingHandCursor)
         
         # デフォルトは「既存」にしておく
         self.radio_existing.setChecked(True)
@@ -159,6 +175,7 @@ class DatabaseSelector(QWidget):
         self.path_input_existing.setReadOnly(True)
         
         self.btn_browse_existing = QPushButton("参照...")
+        self.btn_browse_existing.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_browse_existing.clicked.connect(self.select_existing_file)
 
         existing_layout.addWidget(self.path_input_existing)
@@ -179,6 +196,7 @@ class DatabaseSelector(QWidget):
         self.folder_input = QLineEdit(self.current_folder)
         self.folder_input.setReadOnly(True)
         self.btn_browse_folder = QPushButton("フォルダ変更...")
+        self.btn_browse_folder.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_browse_folder.clicked.connect(self.select_folder)
         
         folder_layout.addWidget(self.folder_input)
@@ -222,22 +240,22 @@ class DatabaseSelector(QWidget):
 
     def select_folder(self):
         """新規作成時の保存先フォルダ選択"""
-        path = QFileDialog.getExistingDirectory(self, "保存先フォルダを選択", self.current_folder)
+        path: str = QFileDialog.getExistingDirectory(self, "保存先フォルダを選択", self.current_folder)
         if path:
             self.current_folder = path
             self.folder_input.setText(path)
 
-    def get_active_db_path(self):
+    def get_active_db_path(self) -> tuple[Path|None, bool]:
         """
             現在選択されているモードに基づいて、
             「データベースの絶対パス」を返す。
-            戻り値: (path_string, is_new_bool)
-            エラー時: (None, is_new_bool)
+            Returns:
+                tuple[Path|None, bool]: (データベースのパス or None, is_new_mode)
         """
         if self.radio_existing.isChecked():
             # 既存モード
             path = self.path_input_existing.text().strip()
-            return (path if path else None, False)
+            return (Path(path) if path else None, False)
         else:
             # 新規モード
             folder = self.folder_input.text().strip()
@@ -246,10 +264,11 @@ class DatabaseSelector(QWidget):
                 return (None, True)
             
             # 拡張子補完
-            if not name.lower().endswith(".db"):
-                name += ".db"
-            
-            full_path = os.path.join(folder, name)
+            path_name = Path(name)
+            if not path_name.suffix.lower() == ".db":
+                path_name = path_name.with_suffix(".db")
+
+            full_path = Path(folder) / path_name
             return (full_path, True)
 
 # メインウィンドウ
@@ -267,7 +286,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         central_widget.setLayout(layout)
 
-        self.full_path = None
+        self.full_path: Path = None
 
         # ---------------------------------------------------------
         # 入力エリア
@@ -314,6 +333,7 @@ class MainWindow(QMainWindow):
         layout.addSpacing(20)
 
         self.run_button = QPushButton("Start")
+        self.run_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.run_button.setHeight = 50
         # ボタンを目立たせるスタイルシート（任意）
         self.run_button.setStyleSheet("""     
@@ -343,12 +363,12 @@ class MainWindow(QMainWindow):
         # 下部にスペースを埋めるための伸縮アイテム
         layout.addStretch()
 
-    def update_file_path(self, path) -> None:
+    def update_file_path(self, path: str) -> None:
         """
             ドロップエリアからパスを受け取る
         """
-        self.full_path = path
-        path = os.path.basename(path)
+        self.full_path = Path(path)
+        path = self.full_path.name
         self.path_display.setText(path)
 
     def start_analysis(self) -> None:
@@ -361,7 +381,7 @@ class MainWindow(QMainWindow):
         if not tournament_name:
             QMessageBox.warning(self, "入力エラー", "大会名を入力してください。")
             return
-        if not self.full_path or not os.path.exists(self.full_path):
+        if not self.full_path or not self.full_path.exists():
             QMessageBox.warning(self, "入力エラー", "有効なPDFファイルを選択してください。")
             return
         
@@ -374,9 +394,9 @@ class MainWindow(QMainWindow):
 
         if is_new:
             # 既に同名ファイルがあるかチェックする
-            if os.path.exists(db_path):
+            if db_path.exists():
                 ret = QMessageBox.question(self, "上書き確認", 
-                    f"ファイルが既に存在します。\n追記しますか？\n{db_path}",
+                    f"ファイルが既に存在します。\n追記しますか？\n{str(db_path)}",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                 if ret == QMessageBox.StandardButton.No:
                     return
@@ -384,20 +404,23 @@ class MainWindow(QMainWindow):
                     print(f"既存接続モード: {db_path}")
             else:
                 print(f"新規作成モード: {db_path}")
-                set_tables(db_path)
+                set_tables(str(db_path))
         else:
             print(f"既存接続モード: {db_path}")
 
         # -------------------------------------------------------
         # ここでバックグラウンド処理(QThread)を開始
         # -------------------------------------------------------
-        QMessageBox.information(self, "確認", 
-            f"以下の情報で解析を開始します。\n\n"
+        ret_start = QMessageBox.question(self, "確認", 
+            f"以下の情報で解析を開始しますか？\n\n"
             f"大会名: {tournament_name}\n"
-            f"ファイル: {os.path.basename(self.full_path)}\n"
-            f"データベース: {os.path.basename(db_path)}\n"
-            f"形式: {'MD' if self.md_btn_group.checkedId() == 1 else '4人制'}"
+            f"ファイル: {self.full_path.name}\n"
+            f"データベース: {db_path.name}\n"
+            f"形式: {'MD' if self.md_btn_group.checkedId() == 1 else '4人制'}",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
         )
+        if ret_start == QMessageBox.StandardButton.Cancel:
+            return
 
         # 2. UIを「処理中モード」にする
         self.run_button.setEnabled(False) # 二重押し防止
@@ -419,6 +442,8 @@ class MainWindow(QMainWindow):
         mode_layout = QHBoxLayout()
         radio1 = QRadioButton(txt1)
         radio2 = QRadioButton(txt2)
+        radio1.setCursor(Qt.CursorShape.PointingHandCursor)
+        radio2.setCursor(Qt.CursorShape.PointingHandCursor)
 
         if default == 0:
             radio1.setChecked(True)
@@ -473,6 +498,9 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Complete", msg)
         self.progress_bar.setValue(100)
         self.worker = None # 後始末
+        self.tournament_input.clear()
+        self.path_display.clear()
+        self.drop_area.clear()
 
     def analysis_error(self, err_msg) -> None:
         """

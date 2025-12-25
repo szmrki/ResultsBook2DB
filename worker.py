@@ -17,7 +17,7 @@ class Worker(QThread):
     error_signal = Signal(str)          # エラー発生時のメッセージ
     visible_signal = Signal(bool)      # プログレスバーの表示/非表示
 
-    def __init__(self, pdf_path, tournament_name, db_path, is_md=False) -> None:
+    def __init__(self, pdf_path: Path, tournament_name: str, db_path: Path, is_md=False) -> None:
         super().__init__()
         self.pdf_path = pdf_path
         self.tournament_name = tournament_name
@@ -34,8 +34,8 @@ class Worker(QThread):
             self.progress_signal.emit(0, "Loading...")
             
             # 処理本体
-            self.conn = sqlite3.connect(self.db_path)
-            action = self.executemodel(self.tournament_name, self.pdf_path, self.is_md)
+            self.conn = sqlite3.connect(str(self.db_path))
+            action = self.executemodel(self.tournament_name, str(self.pdf_path), self.is_md)
             self.conn.close()
 
             if action:
@@ -53,7 +53,7 @@ class Worker(QThread):
         self.visible_signal.emit(False)
         self.progress_signal.emit(0, "")
 
-    def executemodel(self, game, file_path, is_MD=False) -> bool:
+    def executemodel(self, game: str, file_path: str, is_MD=False) -> bool:
         """
             指定された大会フォルダ内のPDFを解析し、DBに情報を格納する。
             解析にはYOLOモデルを使用し、必要に応じてファインチューニングも行う。

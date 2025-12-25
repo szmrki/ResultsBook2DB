@@ -2,7 +2,7 @@ import sqlite3
 import os
 import sys
 
-def set_tables(dbname):
+def set_tables(dbname: str):
     conn = sqlite3.connect(dbname)
     cur = conn.cursor()
     cur.execute(
