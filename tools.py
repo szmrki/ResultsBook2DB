@@ -9,7 +9,7 @@ import yaml
 import random
 import shutil
 
-def extract_shotbyshot(doc, page, model) -> tuple[np.ndarray, 
+def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model, is_md=False) -> tuple[np.ndarray, 
                                                 list[dict[str, int, str, str, str, int]]]:
     """
         ページからショットバイショット画像を抽出するメソッド
@@ -17,6 +17,7 @@ def extract_shotbyshot(doc, page, model) -> tuple[np.ndarray,
             doc : PyMuPDFのオブジェクト
             page : PyMuPDFのページオブジェクト
             model : ストーン検出モデル
+            is_md : MD or 4人制
         Returns:
             tuple[np.ndarray, list[tuple[str, str, str, str, int]]] : 
                 ストーン座標の配列（num_shots x 16 x 6）とショット情報のリスト
@@ -64,6 +65,9 @@ def extract_shotbyshot(doc, page, model) -> tuple[np.ndarray,
 
     # 上→下、左→右でソート(投球順に合わせる)
     shotbyshot_list.sort(key=lambda im: (im["y"], im["x"]))
+
+    if is_md and "prepositioned stones" in [t.lower() for t in text]:
+        del shotbyshot_list[0]  #先頭画像を削除
             
     stones_end_list = []
     for img in shotbyshot_list:
@@ -165,7 +169,7 @@ def __get_shot_info(all_texts) -> list[dict[str, int, str, str, str, int]]:
     
     return shots
 
-def get_hammer(scores, is_md=False) -> list[int]: 
+def get_hammer(scores: pd.DataFrame, is_md=False) -> list[int]: 
     """
         スコア表ベースでエンドごとのハンマーのindexを取得する
         Args:
@@ -234,7 +238,7 @@ def save_images(doc: fitz.open, output_dir: Path, save_num: int) -> None:
             if num_images >= save_num: break
         else: continue
 
-def __extract_images(doc: fitz.open, page) -> tuple[list, list]:
+def __extract_images(doc: fitz.Document, page: fitz.Page) -> tuple[list, list]:
     """
         PDFからシート画像を抽出し,辞書形式で保持する
         Args:
@@ -483,9 +487,21 @@ if __name__ == "__main__":
     delete_files(image_dir / "val")
     delete_files(label_dir / "val")
     
-    file_path = Path("rb_data/data_4p/OWG2022/OWG2022_ResultsBook_4p.pdf")
+    file_path = Path("rb_data\\data_md\\WMDCC2025\\WMDCC2025_ResultsBook.pdf")
     #file_path = Path("rb_data/data_4p/ECC2023Men/ECC2023_ResultsBook_Men_A-Division.pdf")
     doc = fitz.open(file_path)
+    page = doc[9]
+    text = page.get_text()
+    text = text.splitlines()
+    print("prepositioned stones" in [t.lower() for t in text])
+    shot_info_list = __get_shot_info(text)
+    print(len(shot_info_list))
+    shotbyshot_list, bboxes = __extract_images(doc, page)
+    if "prepositioned stones" in [t.lower() for t in text]:
+        del shotbyshot_list[0]  #先頭画像を削除
+        del bboxes[0]
+    print(len(shotbyshot_list), len(bboxes))
+    #print(text)
     """
     save_images(doc, output_dir=image_dir, save_num=500)
     create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir, threshold=0.75)
@@ -526,12 +542,14 @@ if __name__ == "__main__":
     #scores = extract_game_result(page)
     #print(scores)
     """
-    page = doc[12]
+
+    """
     # --- ページ全体をレンダリング ---
     scale = 1
     matrix = fitz.Matrix(scale, scale)   
     full_pix = page.get_pixmap(matrix=matrix)
     test_img = __pixmap2cv2(full_pix)
+    """
     """
     img_list, _ = __extract_images(doc, page)
     test_img = img_list[0]["img"]
@@ -542,6 +560,6 @@ if __name__ == "__main__":
     #test_img = test_img[..., ::-1]
     print(test_img.shape)
     """
-    cv2.imshow("test", test_img)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    #cv2.imshow("test", test_img)
+    #cv2.waitKey(0)
+    #cv2.destroyAllWindows()

@@ -42,14 +42,15 @@ class Worker(QThread):
                 self.progress_signal.emit(100, "Complete")
                 time.sleep(1)
                 self.finished_signal.emit("Saved to DB successfully.")
-            self.visible_signal.emit(False)
-            self.progress_signal.emit(0, "")
 
         except Exception as e:
             # エラーが起きたら詳細を画面に送る
             error_msg = traceback.format_exc()
             self.error_signal.emit(f"An error has occurred.\n{e}\n{error_msg}")
             print(error_msg)
+
+        self.visible_signal.emit(False)
+        self.progress_signal.emit(0, "")
 
     def executemodel(self, game, file_path, is_MD=False) -> bool:
         """
@@ -189,7 +190,7 @@ class Worker(QThread):
                                     score_red, score_yellow))
                     end_id = cur.lastrowid #end_idを取得
                     print(f"Shot-by-Shot page: {page_num}")
-                    stones_end, shot_info = extract_shotbyshot(doc, page_mu, model)
+                    stones_end, shot_info = extract_shotbyshot(doc, page_mu, model, self.is_md)
                     #print(stones_end[0])
                     #count += len(shot_info)
                     #count2 += stones_end.shape[0]

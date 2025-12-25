@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QFileDialog, QMessageBox, QFormLayout, QGroupBox, 
                              QRadioButton, QButtonGroup, QProgressBar)
 from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent
 from pathlib import Path
 from create_db import set_tables
 from worker import Worker
@@ -43,7 +44,7 @@ class FileDropLabel(QLabel):
         # ドロップを受け付ける設定
         self.setAcceptDrops(True)
 
-    def dragEnterEvent(self, event) -> None:
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         """ドラッグされたものがエリアに入った時の処理"""
         if event.mimeData().hasUrls():
             # ファイルなら受け入れる
@@ -59,7 +60,7 @@ class FileDropLabel(QLabel):
         else:
             event.ignore()
 
-    def dragLeaveEvent(self, event) -> None:
+    def dragLeaveEvent(self) -> None:
         """ドラッグがエリアから出た時の処理（デザインを戻す）"""
         self.setStyleSheet("""
             QLabel {
@@ -70,7 +71,7 @@ class FileDropLabel(QLabel):
             }
         """)
 
-    def dropEvent(self, event) -> None:
+    def dropEvent(self, event: QDropEvent) -> None:
         """ドロップされた時の処理"""
         urls = event.mimeData().urls()
         if urls:
@@ -95,10 +96,8 @@ class FileDropLabel(QLabel):
                 """)
                 
 
-    def mousePressEvent(self, event) -> None:
-        """クリックされた時（必要ならここにファイル選択ダイアログ処理を書く）"""
-        # 今回はクリック処理は親側で実装するか、ここで実装するか選べますが
-        # シンプルに「クリックでも反応する」UIにする場合に使います
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """クリックされた時の処理"""
         super().mousePressEvent(event)
         file_name, _ = QFileDialog.getOpenFileName(
             self,
@@ -189,7 +188,6 @@ class DatabaseSelector(QWidget):
         # B. ファイル名入力
         filename_layout = QHBoxLayout()
         self.filename_input = QLineEdit()
-        #self.filename_input.setPlaceholderText("例: curling_match_2025")
         
         # 拡張子ラベル (.db)
         ext_label = QLabel(".db")
@@ -286,7 +284,7 @@ class MainWindow(QMainWindow):
 
         # 現在選択されているファイルパスを表示する（確認用）
         self.path_display = QLineEdit()
-        self.path_display.setPlaceholderText("ファイルパスがここに表示されます")
+        self.path_display.setPlaceholderText("PDFファイル名がここに表示されます")
         self.path_display.setReadOnly(True)
         layout.addWidget(self.path_display)
 
@@ -378,12 +376,15 @@ class MainWindow(QMainWindow):
             # 既に同名ファイルがあるかチェックする
             if os.path.exists(db_path):
                 ret = QMessageBox.question(self, "上書き確認", 
-                    f"ファイルが既に存在します。\n上書きしますか？\n{db_path}",
+                    f"ファイルが既に存在します。\n追記しますか？\n{db_path}",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                 if ret == QMessageBox.StandardButton.No:
                     return
-            print(f"新規作成モード: {db_path}")
-            set_tables(db_path)
+                else:
+                    print(f"既存接続モード: {db_path}")
+            else:
+                print(f"新規作成モード: {db_path}")
+                set_tables(db_path)
         else:
             print(f"既存接続モード: {db_path}")
 
