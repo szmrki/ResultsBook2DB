@@ -18,7 +18,7 @@ def set_tables(dbname: str):
         'CREATE TABLE shots(id INTEGER PRIMARY KEY AUTOINCREMENT, end_id INTEGER NOT NULL, number INTEGER, color STRING, team STRING, player_name STRING, type STRING, turn STRING, percent_score INTEGER)'
     )
     cur.execute(
-        'CREATE TABLE stones(id INTEGER PRIMARY KEY AUTOINCREMENT, shot_id NOT NULL, color STRING, x FLOAT, y FLOAT, dist FLOAT, inhouse INTEGER, insheet INTEGER)'
+        'CREATE TABLE stones(id INTEGER PRIMARY KEY AUTOINCREMENT, shot_id NOT NULL, color STRING, x FLOAT, y FLOAT, distance_from_center FLOAT, inhouse INTEGER, insheet INTEGER)'
     )
     conn.commit()
     conn.close()

@@ -221,7 +221,7 @@ class Worker(QThread):
                         if len(rows) == 0: #ストーンが存在しない場合はidのみ
                             rows = [(shot_id, None, None, None, None, None, None)]
                         #ストーンはまとめてinsert
-                        cur.executemany("""INSERT INTO stones (shot_id, color, x, y, dist,  
+                        cur.executemany("""INSERT INTO stones (shot_id, color, x, y, distance_from_center,  
                                         inhouse, insheet) VALUES (?, ?, ?, ?, ?, ?, ?)""", rows)
                     num_end += 1
                     #break
