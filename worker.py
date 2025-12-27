@@ -116,8 +116,8 @@ class Worker(QThread):
                 conf=0.5,
                 save=True,
                 exist_ok=True,
-                #verbose=False,
-                workers=0
+                workers=0,      #動作安定のため、シングルスレッドによる実行
+                patience=10     #Early Stoppingを10エポックに設定
             )
 
             Path(game_pt).unlink(missing_ok=True) #game_ptが存在する場合削除
