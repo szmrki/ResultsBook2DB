@@ -19,9 +19,9 @@ class Worker(QThread):
 
     def __init__(self, pdf_path: Path, tournament_name: str, db_path: Path, is_md=False) -> None:
         super().__init__()
-        self.pdf_path = pdf_path
+        self.pdf_path = str(pdf_path)
         self.tournament_name = tournament_name
-        self.db_path = db_path
+        self.db_path = str(db_path)
         self.is_md = is_md
 
     def run(self) -> None:
@@ -34,8 +34,8 @@ class Worker(QThread):
             self.progress_signal.emit(0, "Loading...")
             
             # 処理本体
-            self.conn = sqlite3.connect(str(self.db_path))
-            action = self.executemodel(self.tournament_name, str(self.pdf_path), self.is_md)
+            self.conn = sqlite3.connect(self.db_path)
+            action = self.executemodel()
             self.conn.close()
 
             if action:
@@ -53,18 +53,16 @@ class Worker(QThread):
         self.visible_signal.emit(False)
         self.progress_signal.emit(0, "")
 
-    def executemodel(self, game: str, file_path: str, is_MD=False) -> bool:
+    def executemodel(self) -> bool:
         """
             指定された大会フォルダ内のPDFを解析し、DBに情報を格納する。
             解析にはYOLOモデルを使用し、必要に応じてファインチューニングも行う。
             解析結果はSQLiteデータベースに保存される。
-            Args:
-                game (str): 大会名（フォルダ名）
-                file_path (str): PDFファイルのパス
-                is_MD (bool): MD版かどうかのフラグ
+
             Returns:
                 bool : 処理が成功したらTrue、失敗したらFalse
         """
+        game = self.tournament_name
         num2color = {0: "red", 1: "yellow"}
         work_dir = Path.cwd()
         model_dir = resource_path(Path("complete_model"))
@@ -79,8 +77,8 @@ class Worker(QThread):
 
         event_id = cur.lastrowid #event_idを取得
 
-        doc = fitz.open(file_path)
-        print(file_path)
+        doc = fitz.open(self.pdf_path)
+        print(self.pdf_path)
 
         #モデルの定義
         #該当の大会についてファインチューニング済みであればそれを用いる
@@ -142,7 +140,7 @@ class Worker(QThread):
         #break
         model = YOLO(game_pt) #ファインチューニング済みモデルをロード
 
-        with pdfplumber.open(file_path) as pdf:
+        with pdfplumber.open(self.pdf_path) as pdf:
             for pn in range(doc.page_count):
                 self.progress_signal.emit(int(pn/doc.page_count*100), "Extracting data...")
                 page_num = pn + 1
@@ -154,7 +152,7 @@ class Worker(QThread):
                     
                     scores = extract_game_result(page_plumber) #得点表のdf
                     print(scores)
-                    hammers = get_hammer(scores, is_MD)  #各エンドのハンマー情報
+                    hammers = get_hammer(scores, self.is_md)  #各エンドのハンマー情報
                     print(hammers)
                     team_red = scores.at[0, "team"]
                     team_yellow = scores.at[1, "team"]
