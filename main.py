@@ -288,9 +288,9 @@ class MainWindow(QMainWindow):
 
         self.full_path: Path = None
 
-        # ---------------------------------------------------------
+        # -----------------
         # 入力エリア
-        # ---------------------------------------------------------
+        # -----------------
         # DB選択エリアを追加
         self.db_selector = DatabaseSelector()
         layout.addWidget(self.db_selector)
@@ -301,11 +301,10 @@ class MainWindow(QMainWindow):
         self.drop_area.fileDropped.connect(self.update_file_path)
         layout.addWidget(self.drop_area)
 
-        # 現在選択されているファイルパスを表示する（確認用）
         self.path_display = QLineEdit()
-        self.path_display.setPlaceholderText("PDFファイル名がここに表示されます")
-        self.path_display.setReadOnly(True)
-        layout.addWidget(self.path_display)
+        #self.path_display.setPlaceholderText("PDFファイル名がここに表示されます")
+        #self.path_display.setReadOnly(True)
+        #layout.addWidget(self.path_display) 必要性が少ないため削除
 
         form_layout = QFormLayout()
         form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight) # ラベルを右寄せ
@@ -314,7 +313,7 @@ class MainWindow(QMainWindow):
         self.tournament_input = QLineEdit()
         self.tournament_input.setPlaceholderText("e.g.: WWCC2025")
         self.path_display.textChanged.connect(self.set_pred_text)
-        form_layout.addRow("Event Name:", self.tournament_input)
+        form_layout.addRow("Event Name ", self.tournament_input)
         
         # メインレイアウトにフォームを追加
         layout.addLayout(form_layout)
@@ -335,14 +334,15 @@ class MainWindow(QMainWindow):
         self.run_button = QPushButton("Start")
         self.run_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.run_button.setHeight = 50
-        # ボタンを目立たせるスタイルシート（任意）
+        # ボタンを目立たせるスタイルシート
         self.run_button.setStyleSheet("""     
                 QPushButton {
                 background-color: #0078D7;
                 color: white;
                 font-weight: bold;
-                padding: 10px;
+                padding: 6px;
                 border-radius: 5px;
+                font-size: 18px;
             }
             QPushButton:hover {
                 background-color: #005A9E;
