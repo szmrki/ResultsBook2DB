@@ -311,6 +311,12 @@ def split_train_val(image_dir: Path, label_dir: Path, train_ratio=0.8, seed=42) 
     train_lbl_dir.mkdir(parents=True, exist_ok=True)
     val_lbl_dir.mkdir(parents=True, exist_ok=True)
 
+    #画像フォルダ初期化
+    delete_files(train_img_dir)
+    delete_files(train_lbl_dir)
+    delete_files(val_img_dir)
+    delete_files(val_lbl_dir)
+
     # 画像一覧取得（.png限定）
     images = [f for f in os.listdir(image_dir) if f.endswith(".png")]
 

@@ -118,6 +118,7 @@ class FileDropLabel(QLabel):
                 border-radius: 10px;
                 background-color: #eaf4ff;
                 font-size: 14px;
+                color: black;
             }
         """)
         # メインウィンドウに通知
