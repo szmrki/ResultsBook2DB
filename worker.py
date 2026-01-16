@@ -5,6 +5,7 @@ import sqlite3
 from tools import *
 import sys
 from itertools import zip_longest
+import io
 
 resource_path = lambda p: Path(getattr(
     sys, '_MEIPASS', os.path.abspath(os.path.dirname(__file__))
@@ -28,6 +29,12 @@ class Worker(QThread):
         """
             別スレッドで実行される処理
         """
+        # --- 偽の出力先を作成 ---
+        if sys.stdout is None:
+            sys.stdout = io.StringIO()
+        if sys.stderr is None:
+            sys.stderr = io.StringIO()
+        # ------------------
         try:
             # --- 処理開始の通知 ---
             self.visible_signal.emit(True)
@@ -117,7 +124,7 @@ class Worker(QThread):
                 save=True,
                 exist_ok=True,
                 workers=0,      #動作安定のため、シングルスレッドによる実行
-                patience=10     #Early Stoppingを10エポックに設定
+                patience=10,     #Early Stoppingを10エポックに設定
             )
 
             Path(game_pt).unlink(missing_ok=True) #game_ptが存在する場合削除

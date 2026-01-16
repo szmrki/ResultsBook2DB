@@ -520,7 +520,6 @@ class MainWindow(QMainWindow):
         if not visible:
             QTimer.singleShot(0, self.adjustSize)
 
-
 # アプリケーション起動
 if __name__ == "__main__":
     multiprocessing.freeze_support()
