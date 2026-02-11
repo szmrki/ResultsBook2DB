@@ -135,7 +135,7 @@ def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshol
         results = model.predict(
             source=img_path,                 
             iou=0.3,                    # NMS IoUしきい値
-            #conf=0.5,                   #信頼度しきい値
+            conf=0.5,                   #信頼度しきい値
             save=False,                 # 結果画像を保存しない
             save_txt=False,
             exist_ok=True,

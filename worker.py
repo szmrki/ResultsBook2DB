@@ -100,7 +100,7 @@ class Worker(QThread):
             image_dir = dataset_dir / "images"
             label_dir = dataset_dir / "labels"
             yaml_path = work_dir / "yaml" / "data.yaml"     
-            save_images(doc, output_dir=image_dir, save_num=500)
+            save_images(doc, output_dir=image_dir, save_num=400)
             create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir, threshold=0.75)
             split_train_val(image_dir, label_dir, train_ratio=0.8)
             create_yaml(yaml_path, dataset_dir)
