@@ -493,7 +493,7 @@ if __name__ == "__main__":
     delete_files(image_dir / "val")
     delete_files(label_dir / "val")
     
-    file_path = Path("rb_data\\data_md\\WMDCC2025\\WMDCC2025_ResultsBook.pdf")
+    file_path = Path("rb_data/data_md/WMDCC2025/WMDCC2025_ResultsBook.pdf")
     #file_path = Path("rb_data/data_4p/ECC2023Men/ECC2023_ResultsBook_Men_A-Division.pdf")
     doc = fitz.open(file_path)
     page = doc[9]
