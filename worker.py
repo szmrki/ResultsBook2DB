@@ -18,16 +18,16 @@ class Worker(QThread):
     error_signal = Signal(str)          # エラー発生時のメッセージ
     visible_signal = Signal(bool)      # プログレスバーの表示/非表示
 
-    def __init__(self, pdf_path: Path, tournament_name: str, db_path: Path, is_md=False) -> None:
+    def __init__(self, pdf_entries: list, db_path: Path, is_md=False) -> None:
         super().__init__()
-        self.pdf_path = str(pdf_path)
-        self.tournament_name = tournament_name
+        # pdf_entries: list of {"path": Path, "event_name": str}
+        self.pdf_entries = pdf_entries
         self.db_path = str(db_path)
         self.is_md = is_md
 
     def run(self) -> None:
         """
-            別スレッドで実行される処理
+            別スレッドで実行される処理（複数PDF対応）
         """
         # --- 偽の出力先を作成 ---
         if sys.stdout is None:
@@ -42,14 +42,39 @@ class Worker(QThread):
             
             # 処理本体
             self.conn = sqlite3.connect(self.db_path)
-            action = self.executemodel()
+            
+            total = len(self.pdf_entries)
+            errors = []
+            
+            for i, entry in enumerate(self.pdf_entries, start=1):
+                pdf_path = str(entry["path"])
+                tournament_name = entry["event_name"]
+                prefix = f"[{i}/{total}] "
+                
+                self.progress_signal.emit(0, f"{prefix}{entry['path'].name} - 準備中...")
+                
+                try:
+                    success = self.executemodel(pdf_path, tournament_name, prefix)
+                    if not success:
+                        errors.append(f"{entry['path'].name}: Event Name が既に使用されています")
+                except Exception as e:
+                    error_msg = traceback.format_exc()
+                    errors.append(f"{entry['path'].name}: {e}")
+                    print(error_msg)
+            
             self.conn.close()
-
-            if action:
-                # 処理完了
+            
+            if errors:
+                error_text = "\n".join(errors)
+                if len(errors) == total:
+                    self.error_signal.emit(f"全てのファイルでエラーが発生しました:\n{error_text}")
+                else:
+                    self.finished_signal.emit(
+                        f"処理完了 ({total - len(errors)}/{total} 成功)\n\nエラー:\n{error_text}")
+            else:
                 self.progress_signal.emit(100, "Complete")
                 time.sleep(1)
-                self.finished_signal.emit("Saved to DB successfully.")
+                self.finished_signal.emit(f"全{total}ファイルの保存が完了しました。")
 
         except Exception as e:
             # エラーが起きたら詳細を画面に送る
@@ -60,16 +85,21 @@ class Worker(QThread):
         self.visible_signal.emit(False)
         self.progress_signal.emit(0, "")
 
-    def executemodel(self) -> bool:
+    def executemodel(self, pdf_path: str, tournament_name: str, prefix: str = "") -> bool:
         """
             指定された大会フォルダ内のPDFを解析し、DBに情報を格納する。
             解析にはYOLOモデルを使用し、必要に応じてファインチューニングも行う。
             解析結果はSQLiteデータベースに保存される。
 
+            Args:
+                pdf_path (str): PDFファイルのパス
+                tournament_name (str): 大会名
+                prefix (str): 進捗メッセージの接頭辞（例: "[1/3] "）
+
             Returns:
                 bool : 処理が成功したらTrue、失敗したらFalse
         """
-        game = self.tournament_name
+        game = tournament_name
         num2color = {0: "red", 1: "yellow"}
         work_dir = Path.cwd()
         model_dir = resource_path(Path("complete_model"))
@@ -79,20 +109,19 @@ class Worker(QThread):
             cur.execute('INSERT INTO events(name) VALUES (?)', (game,)) #eventテーブルに大会の名前を記述
         except sqlite3.IntegrityError:
             self.conn.rollback()
-            self.finished_signal.emit("Event Name has already been used.")
             return False
 
         event_id = cur.lastrowid #event_idを取得
 
-        doc = fitz.open(self.pdf_path)
-        print(self.pdf_path)
+        doc = fitz.open(pdf_path)
+        print(pdf_path)
 
         #モデルの定義
         #該当の大会についてファインチューニング済みであればそれを用いる
         game_pt = model_dir / f"{game}.pt"
         if not game_pt.exists():
         #if False:
-            self.progress_signal.emit(0, "Preparing fine-tuning...")
+            self.progress_signal.emit(0, f"{prefix}Preparing fine-tuning...")
             model = YOLO(resource_path(model_dir / "base.pt")) #ベースモデルを選択
         
             ### PDFファイルから画像を400枚程度抽出し、予測を行い疑似ラベルを生成
@@ -109,7 +138,7 @@ class Worker(QThread):
             def on_train_epoch_end(trainer):
                 curr = trainer.epoch + 1
                 total = trainer.epochs
-                self.progress_signal.emit(int(curr/total*100), "Fine-tuning...")
+                self.progress_signal.emit(int(curr/total*100), f"{prefix}Fine-tuning...")
 
             # コールバック登録
             model.add_callback("on_train_epoch_end", on_train_epoch_end)
@@ -142,14 +171,14 @@ class Worker(QThread):
 
             # 後始末
             model.clear_callback("on_train_epoch_end")
-            self.progress_signal.emit(100, "Fine-tuning complete.")
+            self.progress_signal.emit(100, f"{prefix}Fine-tuning complete.")
         else: pass
         #break
         model = YOLO(game_pt) #ファインチューニング済みモデルをロード
 
-        with pdfplumber.open(self.pdf_path) as pdf:
+        with pdfplumber.open(pdf_path) as pdf:
             for pn in range(doc.page_count):
-                self.progress_signal.emit(int(pn/doc.page_count*100), "Extracting data...")
+                self.progress_signal.emit(int(pn/doc.page_count*100), f"{prefix}Extracting data...")
                 page_num = pn + 1
                 page_plumber = pdf.pages[pn]
                 page_mu = doc[pn]

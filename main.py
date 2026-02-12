@@ -3,7 +3,9 @@ import sys
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                              QFileDialog, QMessageBox, QFormLayout, QGroupBox, 
-                             QRadioButton, QButtonGroup, QProgressBar)
+                             QRadioButton, QButtonGroup, QProgressBar,
+                             QTableWidget, QTableWidgetItem, QHeaderView,
+                             QAbstractItemView)
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent
 from pathlib import Path
@@ -16,7 +18,7 @@ import multiprocessing
 # ---------------------------------------------------------
 class FileDropLabel(QLabel):
     # ファイルがドロップされたことをメイン画面に知らせるシグナル
-    fileDropped = Signal(str)
+    filesDropped = Signal(list)
 
     def __init__(self) -> None:
         super().__init__()
@@ -73,20 +75,19 @@ class FileDropLabel(QLabel):
         """)
 
     def dropEvent(self, event: QDropEvent) -> None:
-        """ドロップされた時の処理"""
+        """ドロップされた時の処理（複数ファイル対応）"""
         urls = event.mimeData().urls()
         if urls:
-            # 最初のファイルのパスを取得
-            file_path = urls[0].toLocalFile()
+            pdf_files = []
+            for url in urls:
+                file_path = url.toLocalFile()
+                if file_path.lower().endswith('.pdf'):
+                    pdf_files.append(file_path)
             
-            # PDFかどうかの簡易チェック
-            if file_path.lower().endswith('.pdf'):
-                self.setText(f"\nSelected File:\n{os.path.basename(file_path)}\n")
-                # 親ウィンドウにパスを通知
-                self.fileDropped.emit(file_path)
+            if pdf_files:
+                self.process_files(pdf_files)
             else:
                 self.setText("\nError:\nPDFファイルのみ対応しています\n")
-                # デザインを戻す
                 self.setStyleSheet("""
                 QLabel {
                     border: 2px dashed red;
@@ -95,23 +96,23 @@ class FileDropLabel(QLabel):
                     font-size: 14px;
                 }
                 """)
-                
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """クリックされた時の処理"""
+        """クリックされた時の処理（複数選択対応）"""
         super().mousePressEvent(event)
-        file_name, _ = QFileDialog.getOpenFileName(
+        file_names, _ = QFileDialog.getOpenFileNames(
             self,
-            "PDFファイルを選択",
-            str(Path.cwd()), # カレントディレクトリから開始
+            "PDFファイルを選択（複数選択可）",
+            str(Path.cwd()),
             "PDF Files (*.pdf)"
         )
-        if file_name:
-            self.process_file(file_name)
+        if file_names:
+            self.process_files(file_names)
 
-    # ドロップとクリックの共通処理
-    def process_file(self, file_path) -> None:
-        self.setText(f"\nSelected File:\n{os.path.basename(file_path)}\n")
+    def process_files(self, file_paths: list) -> None:
+        """ドロップとクリックの共通処理（複数ファイル）"""
+        count = len(file_paths)
+        self.setText(f"\n{count}個のPDFファイルが追加されました\nさらに追加するにはドラッグ&ドロップ\n")
         self.setStyleSheet("""
             QLabel {
                 border: 2px dashed #0078D7;
@@ -122,8 +123,7 @@ class FileDropLabel(QLabel):
             }
         """)
         # メインウィンドウに通知
-        self.fileDropped.emit(file_path)
-        print(file_path)
+        self.filesDropped.emit(file_paths)
     
     def clear(self) -> None:
         """ラベルを初期状態に戻す"""
@@ -277,8 +277,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("ResultsBook2DB")
-        self.setGeometry(100, 100, 500, 200)
-        self.setFixedWidth(500)
+        self.setGeometry(100, 100, 600, 500)
+        self.setFixedWidth(600)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -287,7 +287,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         central_widget.setLayout(layout)
 
-        self.full_path: Path = None
+        self.file_entries = []  # list of {"path": Path, "event_name": str}
 
         # -----------------
         # 入力エリア
@@ -299,25 +299,47 @@ class MainWindow(QMainWindow):
         # カスタムドロップエリアの配置
         self.drop_area = FileDropLabel()
         # シグナルを受け取って変数を更新する関数につなぐ
-        self.drop_area.fileDropped.connect(self.update_file_path)
+        self.drop_area.filesDropped.connect(self.update_file_paths)
         layout.addWidget(self.drop_area)
 
-        self.path_display = QLineEdit()
-        #self.path_display.setPlaceholderText("PDFファイル名がここに表示されます")
-        #self.path_display.setReadOnly(True)
-        #layout.addWidget(self.path_display) 必要性が少ないため削除
+        # -----------------
+        # ファイル一覧テーブル
+        # -----------------
+        table_header_layout = QHBoxLayout()
+        table_label = QLabel("選択されたPDFファイル:")
+        table_label.setStyleSheet("font-weight: bold; margin-top: 5px;")
+        table_header_layout.addWidget(table_label)
+        table_header_layout.addStretch()
 
-        form_layout = QFormLayout()
-        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight) # ラベルを右寄せ
+        # 削除ボタン
+        self.delete_button = QPushButton("選択したファイルを削除")
+        self.delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.delete_button.setStyleSheet("""
+            QPushButton {
+                background-color: #d9534f;
+                color: white;
+                padding: 4px 8px;
+                border-radius: 3px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #c9302c;
+            }
+        """)
+        self.delete_button.clicked.connect(self.delete_selected_files)
+        table_header_layout.addWidget(self.delete_button)
+        layout.addLayout(table_header_layout)
 
-        # 大会名入力
-        self.tournament_input = QLineEdit()
-        self.tournament_input.setPlaceholderText("e.g.: WWCC2025")
-        self.path_display.textChanged.connect(self.set_pred_text)
-        form_layout.addRow("Event Name ", self.tournament_input)
-        
-        # メインレイアウトにフォームを追加
-        layout.addLayout(form_layout)
+        self.file_table = QTableWidget(0, 2)
+        self.file_table.setHorizontalHeaderLabels(["ファイル名", "Event Name"])
+        self.file_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.file_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.file_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.file_table.setMinimumHeight(100)
+        self.file_table.setMaximumHeight(200)
+        self.file_table.cellChanged.connect(self.on_table_cell_changed)
+        layout.addWidget(self.file_table)
+
         layout.addSpacing(10)
 
         #MDかどうかのラジオボタン
@@ -364,27 +386,94 @@ class MainWindow(QMainWindow):
         # 下部にスペースを埋めるための伸縮アイテム
         layout.addStretch()
 
-    def update_file_path(self, path: str) -> None:
+    def predict_event_name(self, filename: str) -> str:
         """
-            ドロップエリアからパスを受け取る
+            ファイル名から大会名を推測する
+            大会名は大文字略称＋年度＋(Men or Women)
         """
-        self.full_path = Path(path)
-        path = self.full_path.name
-        self.path_display.setText(path)
+        text = filename.split('_')[0].upper()
+        if "Men" in filename:
+            text += "Men"
+        elif "Women" in filename:
+            text += "Women"
+        return text
+
+    def update_file_paths(self, paths: list) -> None:
+        """
+            ドロップエリアから複数パスを受け取り、テーブルに追加
+        """
+        self.file_table.blockSignals(True)  # cellChanged シグナルを一時停止
+        added = 0
+        for path_str in paths:
+            path = Path(path_str)
+            # 重複チェック
+            if any(entry["path"] == path for entry in self.file_entries):
+                continue
+            
+            event_name = self.predict_event_name(path.name)
+            self.file_entries.append({"path": path, "event_name": event_name})
+            
+            row = self.file_table.rowCount()
+            self.file_table.insertRow(row)
+            
+            # ファイル名（読み取り専用）
+            name_item = QTableWidgetItem(path.name)
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.file_table.setItem(row, 0, name_item)
+            
+            # Event Name（編集可能）
+            event_item = QTableWidgetItem(event_name)
+            self.file_table.setItem(row, 1, event_item)
+            added += 1
+        
+        self.file_table.blockSignals(False)
+        print(f"{added}個のファイルを追加 (合計: {len(self.file_entries)}個)")
+
+    def on_table_cell_changed(self, row, column) -> None:
+        """テーブルのEvent Name列が編集された時の処理"""
+        if column == 1 and row < len(self.file_entries):
+            new_name = self.file_table.item(row, 1).text().strip()
+            self.file_entries[row]["event_name"] = new_name
+
+    def delete_selected_files(self) -> None:
+        """選択されたファイルをテーブルから削除"""
+        selected_rows = sorted(
+            set(index.row() for index in self.file_table.selectedIndexes()), 
+            reverse=True
+        )
+        if not selected_rows:
+            return
+        
+        for row in selected_rows:
+            self.file_table.removeRow(row)
+            if row < len(self.file_entries):
+                self.file_entries.pop(row)
+        
+        if not self.file_entries:
+            self.drop_area.clear()
+        
+        print(f"残りファイル数: {len(self.file_entries)}")
 
     def start_analysis(self) -> None:
         """
             解析開始ボタンが押されたときの処理
         """
-        tournament_name = self.tournament_input.text().strip()
-
         # 入力チェック
-        if not tournament_name:
-            QMessageBox.warning(self, "入力エラー", "大会名を入力してください。")
+        if not self.file_entries:
+            QMessageBox.warning(self, "入力エラー", "PDFファイルを選択してください。")
             return
-        if not self.full_path or not self.full_path.exists():
-            QMessageBox.warning(self, "入力エラー", "有効なPDFファイルを選択してください。")
-            return
+        
+        # Event Name の空チェックとファイル存在チェック
+        for entry in self.file_entries:
+            if not entry["event_name"]:
+                QMessageBox.warning(self, "入力エラー", 
+                    f"{entry['path'].name} のEvent Nameが入力されていません。\n"
+                    "テーブルのEvent Name列をダブルクリックして編集してください。")
+                return
+            if not entry["path"].exists():
+                QMessageBox.warning(self, "入力エラー", 
+                    f"{entry['path'].name} が見つかりません。")
+                return
         
         # ウィジェットからパス情報を取得
         db_path, is_new = self.db_selector.get_active_db_path()
@@ -412,10 +501,12 @@ class MainWindow(QMainWindow):
         # -------------------------------------------------------
         # ここでバックグラウンド処理(QThread)を開始
         # -------------------------------------------------------
+        file_list_text = "\n".join(
+            [f"  {e['path'].name} → {e['event_name']}" for e in self.file_entries]
+        )
         ret_start = QMessageBox.question(self, "確認", 
             f"以下の情報で解析を開始しますか？\n\n"
-            f"大会名: {tournament_name}\n"
-            f"ファイル: {self.full_path.name}\n"
+            f"ファイル ({len(self.file_entries)}件):\n{file_list_text}\n\n"
             f"データベース: {db_path.name}\n"
             f"形式: {'MD' if self.md_btn_group.checkedId() == 1 else '4人制'}",
             QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
@@ -428,7 +519,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
 
         # 3. Workerスレッドを作成
-        self.worker = Worker(self.full_path, tournament_name, db_path, self.is_md)
+        self.worker = Worker(self.file_entries, db_path, self.is_md)
 
         # 4. シグナル（通信）を接続
         self.worker.progress_signal.connect(self.update_progress)
@@ -469,19 +560,6 @@ class MainWindow(QMainWindow):
         elif button_id == 1:
             self.is_md = True
 
-    def set_pred_text(self) -> None:
-        """
-            予測大会名を設定する
-            大会名は大文字略称＋年度＋(Men or Woomen)
-        """
-        path = self.path_display.text()
-        text = path.split('_')[0].upper()
-        if "Men" in path:
-            text += "Men"
-        elif "Women" in path:
-            text += "Women"
-        self.tournament_input.setText(text)
-
     # --- 以下、スレッドから呼ばれる関数 ---
     def update_progress(self, val, msg) -> None:
         """
@@ -499,8 +577,9 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Complete", msg)
         self.progress_bar.setValue(100)
         self.worker = None # 後始末
-        self.tournament_input.clear()
-        self.path_display.clear()
+        # テーブルとリストをクリア
+        self.file_entries.clear()
+        self.file_table.setRowCount(0)
         self.drop_area.clear()
 
     def analysis_error(self, err_msg) -> None:
