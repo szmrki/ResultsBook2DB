@@ -89,7 +89,7 @@ def extract_game_result(page) -> pd.DataFrame:
             pd.DataFrame : スコア表データフレーム
     """
     text = page.extract_text()
-    team_texts = re.findall(r'\b[A-Z]{3} - [A-Za-z]+\b', text)
+    team_texts = re.findall(r'\b[A-Z]{3} - [^\s\n]+\b', text) #チーム名取得条件を緩和
     #print(team_texts)
     team_red = team_texts[0]
     team_yellow = team_texts[1]
@@ -480,7 +480,7 @@ def __black_more_than_white(image_array: np.ndarray) -> bool:
         return True
     
 if __name__ == "__main__":
-    work_dir = Path.cwd()
+    """work_dir = Path.cwd()
     dataset_dir = work_dir / "yolo_dataset"
     image_dir = dataset_dir / "images"
     label_dir = dataset_dir / "labels"
@@ -491,7 +491,7 @@ if __name__ == "__main__":
     delete_files(image_dir / "train")
     delete_files(label_dir / "train")
     delete_files(image_dir / "val")
-    delete_files(label_dir / "val")
+    delete_files(label_dir / "val")"""
     
     file_path = Path("rb_data/data_md/WMDCC2025/WMDCC2025_ResultsBook.pdf")
     #file_path = Path("rb_data/data_4p/ECC2023Men/ECC2023_ResultsBook_Men_A-Division.pdf")
