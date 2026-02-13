@@ -222,12 +222,21 @@ class Worker(QThread):
                         except Exception:
                             color_hammer = None
                         
-                        # (game_id, page, number, color_hammer, score_red, score_yellow)
+                        # (game_id, page, number, color_hammer, score_red, score_yellow, [is_power_play])
                         # 初期段階では page は None
-                        ends_data.append((game_id, None, num_end_val, color_hammer, score_red, score_yellow))
+                        if self.is_md:
+                            # Power Play情報の抽出ロジックは未実装のため、一旦0(False)またはNULLを入れる
+                            is_power_play = 0  # 仮の値
+                            ends_data.append((game_id, None, num_end_val, color_hammer, score_red, score_yellow, is_power_play))
+                        else:
+                            ends_data.append((game_id, None, num_end_val, color_hammer, score_red, score_yellow))
                         
-                    cur.executemany("""INSERT INTO ends(game_id, page, number, color_hammer, 
-                                    score_red, score_yellow) VALUES (?, ?, ?, ?, ?, ?)""", ends_data)
+                    if self.is_md:
+                        cur.executemany("""INSERT INTO ends(game_id, page, number, color_hammer, 
+                                        score_red, score_yellow, is_power_play) VALUES (?, ?, ?, ?, ?, ?, ?)""", ends_data)
+                    else:
+                        cur.executemany("""INSERT INTO ends(game_id, page, number, color_hammer, 
+                                        score_red, score_yellow) VALUES (?, ?, ?, ?, ?, ?)""", ends_data)
                     
                     num_end = 1
 
