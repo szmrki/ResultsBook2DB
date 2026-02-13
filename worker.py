@@ -203,27 +203,42 @@ class Worker(QThread):
                                     final_score_red, final_score_yellow) VALUES (?, ?, ?, ?, ?, ?)""", 
                                     (event_id, page_num, team_red, team_yellow, fin_red, fin_yellow))
                     game_id = cur.lastrowid #game_idを取得
+
+                    # ここでエンドテーブルに情報を一括挿入
+                    ends_data = []
+                    for i in range(len(hammers)):
+                        if hammers[i] == None: break #コンシード済みのため
+                        num_end_val = i + 1
+                        str_end = str(num_end_val)
+                        try:
+                            score_red = int(scores.at[0, str_end]) #得点表のdfから得点を取得
+                            score_yellow = int(scores.at[1, str_end])
+                        except Exception:
+                            score_red = None #存在しない場合はNULL
+                            score_yellow = None
+                        
+                        try:
+                            color_hammer = num2color[hammers[i]]
+                        except Exception:
+                            color_hammer = None
+                        
+                        # (game_id, page, number, color_hammer, score_red, score_yellow)
+                        # 初期段階では page は None
+                        ends_data.append((game_id, None, num_end_val, color_hammer, score_red, score_yellow))
+                        
+                    cur.executemany("""INSERT INTO ends(game_id, page, number, color_hammer, 
+                                    score_red, score_yellow) VALUES (?, ?, ?, ?, ?, ?)""", ends_data)
+                    
                     num_end = 1
 
                 elif "Shot by Shot" in text: #新たなエンド
-                    #print(num_end)
-                    str_end = str(num_end)
-                    try:
-                        score_red = int(scores.at[0, str_end]) #得点表のdfから得点を取得
-                        score_yellow = int(scores.at[1, str_end])
-                    except Exception:
-                        score_red = None #存在しない場合はNULL
-                        score_yellow = None
+                    # 該当するエンドのページ情報を更新し、end_idを取得
+                    cur.execute("""UPDATE ends SET page = ? WHERE game_id = ? AND number = ?""", 
+                                (page_num, game_id, num_end))
+                    cur.execute("""SELECT id FROM ends WHERE game_id = ? AND number = ?""", 
+                                (game_id, num_end))
+                    end_id = cur.fetchone()[0]
                     
-                    try:
-                        color_hammer = num2color[hammers[num_end - 1]]
-                    except Exception:
-                        color_hammer = None
-                    cur.execute("""INSERT INTO ends(game_id, page, number, color_hammer, 
-                                    score_red, score_yellow) VALUES (?, ?, ?, ?, ?, ?)""", 
-                                    (game_id, page_num, num_end, color_hammer, 
-                                    score_red, score_yellow))
-                    end_id = cur.lastrowid #end_idを取得
                     print(f"Shot-by-Shot page: {page_num}")
                     stones_end, shot_info = extract_shotbyshot(doc, page_mu, model, self.is_md)
                     #print(stones_end[0])

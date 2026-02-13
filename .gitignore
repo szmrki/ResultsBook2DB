@@ -16,8 +16,7 @@ dist/
 complete_model/
 main_testing.spec
 pdf_convert.py
-readme.txt
+myreadme.txt
 todo.txt
-INNO_SETUP_GUIDE.md
 Output/
 setup.iss
