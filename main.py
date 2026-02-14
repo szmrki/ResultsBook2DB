@@ -152,7 +152,7 @@ class DatabaseSelector(QWidget):
 
         # 全体をグループボックスで囲む
         main_layout = QVBoxLayout(self)
-        group_box = QGroupBox("Database Config")
+        group_box = QGroupBox("データベース設定")
         main_layout.addWidget(group_box)
         
         layout = QVBoxLayout(group_box)
@@ -349,6 +349,7 @@ class MainWindow(QMainWindow):
         self.file_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.file_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.file_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        #self.file_table.viewport().setCursor(Qt.CursorShape.PointingHandCursor) # テーブル内を指マークにする
         self.file_table.setMinimumHeight(100)
         self.file_table.setMaximumHeight(200)
         self.file_table.cellChanged.connect(self.on_table_cell_changed)
