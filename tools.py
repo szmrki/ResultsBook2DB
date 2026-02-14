@@ -80,21 +80,35 @@ def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model, is_md=False) 
 
     return stones_end, shot_info_list
 
-def extract_game_result(page) -> pd.DataFrame:
+def extract_game_result(page, is_md=False) -> pd.DataFrame:
     """
         ページからゲーム結果のスコア表を抽出するメソッド
         Args:
             page : pdfplumberのページオブジェクト
+            is_md : MD版かどうか
         Returns:
             pd.DataFrame : スコア表データフレーム
+            list[int] : パワープレイのエンド番号のリスト
     """
     text = page.extract_text()
+    #print(text)
     team_texts = re.findall(r'\b[A-Z]{3} - [^\s\n]+\b', text) #チーム名取得条件を緩和
     #print(team_texts)
     team_red = team_texts[0]
     team_yellow = team_texts[1]
-    tabs = page.find_tables()
     
+    if is_md:
+        power_play_ends = []
+        # Power Playの情報を抽出
+        # 行ごとに分割
+        lines = text.split('\n')
+        for line in lines:
+                # "power play: end " の後ろにある数値のみ抽出
+                # 大文字小文字は区別しない
+                nums = re.findall(r'power play:\s*end\s+(\d+)', line, re.IGNORECASE)
+                power_play_ends.extend([int(n) for n in nums])
+
+    tabs = page.find_tables()
     # 得点表のテーブルを取得
     for table in tabs:
         table = table.extract()
@@ -106,6 +120,8 @@ def extract_game_result(page) -> pd.DataFrame:
     df = pd.DataFrame([[__try_int(cell) for cell in row] for row in table], columns=columns)
     df.insert(0, "team", [team_red, team_yellow])
 
+    if is_md:
+        return df, power_play_ends
     return df
 
 def __get_shot_info(all_texts) -> list[dict[str, int, str, str, str, int]]:

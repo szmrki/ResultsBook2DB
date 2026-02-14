@@ -186,7 +186,10 @@ class Worker(QThread):
                 if "Game Results" in text: #新たな試合
                     print(f"Game Results page: {page_num}")
                     
-                    scores = extract_game_result(page_plumber) #得点表のdf
+                    if self.is_md:
+                        scores, power_play_ends = extract_game_result(page_plumber, self.is_md) #得点表のdfとPPエンドのリスト
+                    else:
+                        scores = extract_game_result(page_plumber) #得点表のdf
                     print(scores)
                     hammers = get_hammer(scores, self.is_md)  #各エンドのハンマー情報
                     print(hammers)
@@ -225,8 +228,8 @@ class Worker(QThread):
                         # (game_id, page, number, color_hammer, score_red, score_yellow, [is_power_play])
                         # 初期段階では page は None
                         if self.is_md:
-                            # Power Play情報の抽出ロジックは未実装のため、一旦0(False)またはNULLを入れる
-                            is_power_play = 0  # 仮の値
+                            # Power Play情報の抽出ロジック
+                            is_power_play = 1 if num_end_val in power_play_ends else 0
                             ends_data.append((game_id, None, num_end_val, color_hammer, score_red, score_yellow, is_power_play))
                         else:
                             ends_data.append((game_id, None, num_end_val, color_hammer, score_red, score_yellow))
