@@ -48,9 +48,10 @@
 | `game_id` | 試合ID (外部キー: `games.id`) |
 | `page` | PDF内の掲載ページ |
 | `number` | エンド番号 |
-| `color_hammer` | ラストストーン（ハンマー）のチームカラー |   
+| `color_hammer` | ラストストーン（ハンマー）のチームカラー |
 | `score_red` | このエンドの赤ストーンチーム得点 |
 | `score_yellow` | このエンドの黄ストーンチーム得点 |
+| `is_power_play` | **(MD版のみ)** パワープレイ実施フラグ |
 
 ### `shots` (ショット情報)
 

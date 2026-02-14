@@ -508,7 +508,7 @@ class MainWindow(QMainWindow):
                     print(f"既存接続モード: {db_path}")
             else:
                 print(f"新規作成モード: {db_path}")
-                set_tables(str(db_path))
+                set_tables(str(db_path), is_md=self.is_md)
         else:
             print(f"既存接続モード: {db_path}")
 
