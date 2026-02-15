@@ -3,6 +3,9 @@ import numpy as np
 import cv2
 import os
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 WIDTH = 299
 TEE_LINE = 159.5
@@ -128,7 +131,7 @@ def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshol
     output_dir.mkdir(parents=True, exist_ok=True)
     imgs = [img for img in os.listdir(image_dir) if img.endswith(".png")]
     for img_path in imgs:
-        print(img_path)
+        logger.info(f"Generating pseudo label for: {img_path}")
         img_path = image_dir / img_path
 
         # 推論（OpenCV画像データを直接渡す）

@@ -8,6 +8,9 @@ import pdfplumber
 import yaml
 import random
 import shutil
+import logging
+
+logger = logging.getLogger(__name__)
 
 def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model, is_md=False) -> tuple[np.ndarray, 
                                                 list[dict[str, int, str, str, str, int]]]:
@@ -60,8 +63,8 @@ def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model, is_md=False) 
                 "x": missing_bbox.x0,
                 "y": missing_bbox.y0,
             })
-            #print("x0=", shotbyshot_list[-1]["x"])
-            #print("y0=", shotbyshot_list[-1]["y"])
+            #logger.debug(f"x0={shotbyshot_list[-1]['x']}")
+            #logger.debug(f"y0={shotbyshot_list[-1]['y']}")
 
     # 上→下、左→右でソート(投球順に合わせる)
     shotbyshot_list.sort(key=lambda im: (im["y"], im["x"]))
@@ -344,7 +347,7 @@ def split_train_val(image_dir: Path, label_dir: Path, train_ratio=0.8, seed=42) 
 
         # ラベルが無い場合はスキップ
         if not lbl_path.exists():
-            print(f"[警告] ラベルが無いためスキップ: {img_name}")
+            logger.warning(f"ラベルが無いためスキップ: {img_name}")
             continue
 
         # train or val に振り分け
@@ -433,7 +436,7 @@ def __found_missing_bbox(bboxes) -> list[fitz.Rect]:
         expected.add((x, ys[2]))
     
     missing = expected - actual
-    print("欠落している画像位置:", missing)
+    logger.info(f"欠落している画像位置: {missing}")
 
     # 幅・高さの推定（最も安定）
     # 同じ行の既存画像と比較する

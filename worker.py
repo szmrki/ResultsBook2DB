@@ -6,6 +6,9 @@ from tools import *
 import sys
 from itertools import zip_longest
 import io
+import logging
+
+logger = logging.getLogger(__name__)
 
 resource_path = lambda p: Path(getattr(
     sys, '_MEIPASS', os.path.abspath(os.path.dirname(__file__))
@@ -43,6 +46,7 @@ class Worker(QThread):
             # 処理本体
             self.conn = sqlite3.connect(self.db_path)
             
+            start_time_all = time.time()
             total = len(self.pdf_entries)
             errors = []
             
@@ -51,18 +55,24 @@ class Worker(QThread):
                 tournament_name = entry["event_name"]
                 prefix = f"[{i}/{total}] "
                 
-                self.progress_signal.emit(0, f"{prefix}{entry['path'].name} - 準備中...")
-                
                 try:
+                    start_time_pdf = time.time()
                     success = self.executemodel(pdf_path, tournament_name, prefix)
-                    if not success:
-                        errors.append(f"{entry['path'].name}: Event Name が既に使用されています")
+                    elapsed_pdf = time.time() - start_time_pdf
+                    if success:
+                        logger.info(f"Finished processing PDF: {entry['path'].name} (took {elapsed_pdf:.2f}s)")
+                    else:
+                        err_msg = f"{entry['path'].name}: Event Name '{tournament_name}' は既に使用されています"
+                        errors.append(err_msg)
+                        logger.error(err_msg)
                 except Exception as e:
                     error_msg = traceback.format_exc()
                     errors.append(f"{entry['path'].name}: {e}")
-                    print(error_msg)
+                    logger.error(error_msg)
             
             self.conn.close()
+            elapsed_all = time.time() - start_time_all
+            logger.info(f"All processes completed in {elapsed_all:.2f}s")
             
             if errors:
                 error_text = "\n".join(errors)
@@ -80,7 +90,7 @@ class Worker(QThread):
             # エラーが起きたら詳細を画面に送る
             error_msg = traceback.format_exc()
             self.error_signal.emit(f"An error has occurred.\n{e}\n{error_msg}")
-            print(error_msg)
+            logger.error(error_msg)
 
         self.visible_signal.emit(False)
         self.progress_signal.emit(0, "")
@@ -109,12 +119,13 @@ class Worker(QThread):
             cur.execute('INSERT INTO events(name) VALUES (?)', (game,)) #eventテーブルに大会の名前を記述
         except sqlite3.IntegrityError:
             self.conn.rollback()
+            logger.warning(f"Duplicate event name found in database: {game}")
             return False
 
         event_id = cur.lastrowid #event_idを取得
 
         doc = fitz.open(pdf_path)
-        print(pdf_path)
+        logger.info(f"Processing PDF: {pdf_path}")
 
         #モデルの定義
         #該当の大会についてファインチューニング済みであればそれを用いる
@@ -184,17 +195,19 @@ class Worker(QThread):
                 page_mu = doc[pn]
                 text = page_mu.get_text()
                 if "Game Results" in text: #新たな試合
-                    print(f"Game Results page: {page_num}")
+                    logger.info(f"Game Results page: {page_num}")
                     
                     if self.is_md:
                         scores, power_play_ends = extract_game_result(page_plumber, self.is_md) #得点表のdfとPPエンドのリスト
                     else:
                         scores = extract_game_result(page_plumber) #得点表のdf
-                    print(scores)
+                    logger.debug(f"Scores:\n{scores}")
                     hammers = get_hammer(scores, self.is_md)  #各エンドのハンマー情報
-                    print(hammers)
+                    logger.debug(f"Hammers: {hammers}")
                     team_red = scores.at[0, "team"]
                     team_yellow = scores.at[1, "team"]
+                    game_context = f"{team_red} vs {team_yellow}"
+                    logger.info(f"Processing Game: {game_context} (Page: {page_num})")
                     try:
                         fin_red = int(scores.at[0, "Total"]) #得点表のdfから最終得点を記録
                         fin_yellow = int(scores.at[1, "Total"])
@@ -251,13 +264,9 @@ class Worker(QThread):
                                 (game_id, num_end))
                     end_id = cur.fetchone()[0]
                     
-                    print(f"Shot-by-Shot page: {page_num}")
+                    
                     stones_end, shot_info = extract_shotbyshot(doc, page_mu, model, self.is_md)
-                    #print(stones_end[0])
-                    #count += len(shot_info)
-                    #count2 += stones_end.shape[0]
-                    #print(shot_info)
-                    print("num shots: ", len(shot_info))
+                    logger.info(f"[{game_context}] End {num_end} - Shot-by-Shot page: {page_num} - Number of shots: {len(shot_info)}")
 
                     for shot_num, (stones, info) in enumerate(zip_longest(stones_end, shot_info), start=1):
                         if info is not None: #正常時
