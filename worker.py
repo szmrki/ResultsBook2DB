@@ -56,12 +56,8 @@ class Worker(QThread):
                 prefix = f"[{i}/{total}] "
                 
                 try:
-                    start_time_pdf = time.time()
                     success = self.executemodel(pdf_path, tournament_name, prefix)
-                    elapsed_pdf = time.time() - start_time_pdf
-                    if success:
-                        logger.info(f"Finished processing PDF: {entry['path'].name} (took {elapsed_pdf:.2f}s)")
-                    else:
+                    if not success:
                         err_msg = f"{entry['path'].name}: Event Name '{tournament_name}' は既に使用されています"
                         errors.append(err_msg)
                         logger.error(err_msg)
@@ -132,6 +128,7 @@ class Worker(QThread):
         game_pt = model_dir / f"{game}.pt"
         if not game_pt.exists():
         #if False:
+            start_time_ft = time.time()
             self.progress_signal.emit(0, f"{prefix}Preparing fine-tuning...")
             model = YOLO(resource_path(model_dir / "base.pt")) #ベースモデルを選択
         
@@ -142,8 +139,9 @@ class Worker(QThread):
             yaml_path = work_dir / "yaml" / "data.yaml"     
             
             try:
-                save_images(doc, output_dir=image_dir, save_num=400)
-                create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir, threshold=0.75)
+                num_images = save_images(doc, output_dir=image_dir, save_num=400)
+                num_labels = create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir, threshold=0.75)
+                logger.info(f"Dataset prepared: {num_labels} pseudo labels from {num_images} images.")
                 split_train_val(image_dir, label_dir, train_ratio=0.8)
                 create_yaml(yaml_path, dataset_dir)
             except Exception as e:
@@ -162,7 +160,7 @@ class Worker(QThread):
             ### 疑似ラベルを用いてモデルのファインチューニングを行う
             try:
                 logger.info(f"Starting fine-tuning for event: {game}")
-                model.train(
+                results = model.train(
                     data=resource_path(yaml_path),    # データセット（train/val のパスを含む）
                     epochs=50,
                     imgsz=600,
@@ -173,6 +171,13 @@ class Worker(QThread):
                     workers=0,      #動作安定のため、シングルスレッドによる実行
                     patience=10,     #Early Stoppingを10エポックに設定
                 )
+                # 学習結果の要約をログに記録
+                if results and hasattr(results, 'results_dict'):
+                    map50 = results.results_dict.get('metrics/mAP50(B)', 'N/A')
+                    map50_95 = results.results_dict.get('metrics/mAP50-95(B)', 'N/A')
+                    logger.info(f"Fine-tuning complete. Results: mAP50={map50}, mAP50-95={map50_95}")
+                else:
+                    logger.info("Fine-tuning complete. Accuracy metrics not available.")
             except Exception as e:
                 logger.error(f"Fine-tuning failed for event '{game}': {e}")
                 logger.error(traceback.format_exc())
@@ -203,11 +208,14 @@ class Worker(QThread):
 
             # 後始末
             model.clear_callback("on_train_epoch_end")
+            elapsed_ft = time.time() - start_time_ft
+            logger.info(f"[{game}] Fine-tuning complete (took {elapsed_ft:.2f}s).")
             self.progress_signal.emit(100, f"{prefix}Fine-tuning complete.")
         else: pass
         #break
         model = YOLO(game_pt) #ファインチューニング済みモデルをロード
 
+        start_time_det = time.time()
         with pdfplumber.open(pdf_path) as pdf:
             for pn in range(doc.page_count):
                 self.progress_signal.emit(int(pn/doc.page_count*100), f"{prefix}Extracting data...")
@@ -319,4 +327,6 @@ class Worker(QThread):
                     continue
         doc.close()
         self.conn.commit()
+        elapsed_det = time.time() - start_time_det
+        logger.info(f"[{game}] Detection complete (took {elapsed_det:.2f}s).")
         return True

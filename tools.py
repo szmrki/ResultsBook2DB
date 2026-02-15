@@ -255,13 +255,15 @@ def get_hammer(scores: pd.DataFrame, is_md=False) -> list[int]:
 
     return hammer_list
 
-def save_images(doc: fitz.open, output_dir: Path, save_num: int) -> None:
+def save_images(doc: fitz.open, output_dir: Path, save_num: int) -> int:
     """
         PDFからシート画像を指定した枚数抽出し保存する
         Args:
             doc : PyMuPDFのオブジェクト
             output_dir : 画像出力先ディレクトリ名
             save_num : 保存する枚数
+        Returns:
+            int : 保存した枚数
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     num_images = 0
@@ -280,6 +282,7 @@ def save_images(doc: fitz.open, output_dir: Path, save_num: int) -> None:
             num_images += len(shotbyshot_list)
             if num_images >= save_num: break
         else: continue
+    return num_images
 
 def __extract_images(doc: fitz.Document, page: fitz.Page) -> tuple[list, list]:
     """
