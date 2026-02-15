@@ -123,6 +123,11 @@ def extract_game_result(page, is_md=False) -> pd.DataFrame:
     df = pd.DataFrame([[__try_int(cell) for cell in row] for row in table], columns=columns)
     df.insert(0, "team", [team_red, team_yellow])
 
+    if df.empty:
+        logger.warning("Extracted game result dataframe is empty.")
+    else:
+        logger.debug(f"Successfully extracted game result:\n{df}")
+    
     if is_md:
         return df, power_play_ends
     return df
@@ -216,6 +221,24 @@ def get_hammer(scores: pd.DataFrame, is_md=False) -> list[int]:
 
     for end in range(1, total_ends):
         str_end = str(end)
+
+        #先に数値かどうか判定してから、ハンマーの処理を行う
+        val0 = scores.at[0, str_end]
+        val1 = scores.at[1, str_end]
+        if str(val0).isdigit() and str(val1).isdigit():
+            if int(val0) > int(val1): #team0が得点した場合
+                hammer_list.append(1)
+            elif int(val0) < int(val1): #team1が得点した場合
+                hammer_list.append(0)
+            else: #ブランクの場合
+                if is_md:
+                    hammer_list.append(1-hammer_list[-1])  #前のエンドから交代
+                else:
+                    hammer_list.append(hammer_list[-1])    #前のエンドと同じ
+        else:  #コンシード等で数値が入力されていない場合
+            hammer_list.append(None)
+
+        """
         try:
             if int(scores.at[0, str_end]) > int(scores.at[1, str_end]): #team0が得点した場合
                 hammer_list.append(1)
@@ -228,6 +251,7 @@ def get_hammer(scores: pd.DataFrame, is_md=False) -> list[int]:
                     hammer_list.append(hammer_list[-1])    #前のエンドと同じ
         except ValueError:
             hammer_list.append(None)
+        """
 
     return hammer_list
 

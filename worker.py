@@ -140,10 +140,15 @@ class Worker(QThread):
             image_dir = dataset_dir / "images"
             label_dir = dataset_dir / "labels"
             yaml_path = work_dir / "yaml" / "data.yaml"     
-            save_images(doc, output_dir=image_dir, save_num=400)
-            create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir, threshold=0.75)
-            split_train_val(image_dir, label_dir, train_ratio=0.8)
-            create_yaml(yaml_path, dataset_dir)
+            
+            try:
+                save_images(doc, output_dir=image_dir, save_num=400)
+                create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir, threshold=0.75)
+                split_train_val(image_dir, label_dir, train_ratio=0.8)
+                create_yaml(yaml_path, dataset_dir)
+            except Exception as e:
+                logger.error(f"Failed to prepare dataset for fine-tuning: {e}")
+                raise
 
             # コールバック関数を定義 ---
             def on_train_epoch_end(trainer):
@@ -155,30 +160,46 @@ class Worker(QThread):
             model.add_callback("on_train_epoch_end", on_train_epoch_end)
 
             ### 疑似ラベルを用いてモデルのファインチューニングを行う
-            model.train(
-                data=resource_path(yaml_path),    # データセット（train/val のパスを含む）
-                epochs=50,
-                imgsz=600,
-                iou=0.3,
-                conf=0.5,
-                save=True,
-                exist_ok=True,
-                workers=0,      #動作安定のため、シングルスレッドによる実行
-                patience=10,     #Early Stoppingを10エポックに設定
-            )
+            try:
+                logger.info(f"Starting fine-tuning for event: {game}")
+                model.train(
+                    data=resource_path(yaml_path),    # データセット（train/val のパスを含む）
+                    epochs=50,
+                    imgsz=600,
+                    iou=0.3,
+                    conf=0.5,
+                    save=True,
+                    exist_ok=True,
+                    workers=0,      #動作安定のため、シングルスレッドによる実行
+                    patience=10,     #Early Stoppingを10エポックに設定
+                )
+            except Exception as e:
+                logger.error(f"Fine-tuning failed for event '{game}': {e}")
+                logger.error(traceback.format_exc())
+                model.clear_callback("on_train_epoch_end")
+                raise
 
             Path(game_pt).unlink(missing_ok=True) #game_ptが存在する場合削除
             try:
                 #best.ptをcomplete_modelにコピーし、大会名にリネーム
                 shutil.copy2(Path("runs/detect/train/weights/best.pt"), game_pt)
-            except FileNotFoundError:
-                model.save(game_pt)
+                logger.info(f"Successfully saved fine-tuned model as {game_pt.name}")
+            except Exception as e:
+                logger.warning(f"Could not copy best.pt to {game_pt.name}: {e}. Attempting direct save.")
+                try:
+                    model.save(game_pt)
+                except Exception as save_e:
+                    logger.error(f"Failed to save model directly: {save_e}")
+                    raise
             
             #画像とラベルを削除
-            delete_files(image_dir / "train")
-            delete_files(label_dir / "train")
-            delete_files(image_dir / "val")
-            delete_files(label_dir / "val")
+            try:
+                delete_files(image_dir / "train")
+                delete_files(label_dir / "train")
+                delete_files(image_dir / "val")
+                delete_files(label_dir / "val")
+            except Exception as e:
+                logger.warning(f"Failed to clean up dataset directories: {e}")
 
             # 後始末
             model.clear_callback("on_train_epoch_end")
@@ -195,19 +216,18 @@ class Worker(QThread):
                 page_mu = doc[pn]
                 text = page_mu.get_text()
                 if "Game Results" in text: #新たな試合
-                    logger.info(f"Game Results page: {page_num}")
-                    
                     if self.is_md:
                         scores, power_play_ends = extract_game_result(page_plumber, self.is_md) #得点表のdfとPPエンドのリスト
                     else:
                         scores = extract_game_result(page_plumber) #得点表のdf
-                    logger.debug(f"Scores:\n{scores}")
+                    
                     hammers = get_hammer(scores, self.is_md)  #各エンドのハンマー情報
-                    logger.debug(f"Hammers: {hammers}")
                     team_red = scores.at[0, "team"]
                     team_yellow = scores.at[1, "team"]
                     game_context = f"{team_red} vs {team_yellow}"
-                    logger.info(f"Processing Game: {game_context} (Page: {page_num})")
+                    logger.debug(f"Scores:\n{scores}")
+                    logger.debug(f"Hammers: {hammers}")
+                    logger.info(f"[{game_context}] - Game Results page: {page_num}")
                     try:
                         fin_red = int(scores.at[0, "Total"]) #得点表のdfから最終得点を記録
                         fin_yellow = int(scores.at[1, "Total"])
