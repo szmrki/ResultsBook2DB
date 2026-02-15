@@ -169,7 +169,7 @@ class Worker(QThread):
                     save=True,
                     exist_ok=True,
                     workers=0,      #動作安定のため、シングルスレッドによる実行
-                    patience=10,     #Early Stoppingを10エポックに設定
+                    patience=5,     #Early Stoppingを5エポックに設定
                 )
                 # 学習結果の要約をログに記録
                 if results and hasattr(results, 'results_dict'):
