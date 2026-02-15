@@ -3,6 +3,9 @@ import numpy as np
 import cv2
 import os
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 WIDTH = 299
 TEE_LINE = 159.5
@@ -117,18 +120,21 @@ def get_hammer_img(img_path, is_md=False, game=None) -> str:
         else:
             return "yellow"
 
-def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshold=0.8) -> None:
+def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshold=0.8) -> int:
     """
         既存のモデルを用いて予測を行い、疑似ラベルを生成する
         Args:
             model : YOLOのモデル
             image_dir : 予測したい画像が格納されているディレクトリ名
             output_dir : ラベルの保存先
+        Returns:
+            int : 生成されたラベル数
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     imgs = [img for img in os.listdir(image_dir) if img.endswith(".png")]
+    num_labels = 0
     for img_path in imgs:
-        print(img_path)
+        logger.debug(f"Generating pseudo label for: {img_path}")
         img_path = image_dir / img_path
 
         # 推論（OpenCV画像データを直接渡す）
@@ -159,7 +165,6 @@ def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshol
                              ))
             
         if skip_flag: 
-            #os.remove(img_path)
             img_path.unlink(missing_ok=True)
             continue
         else:
@@ -170,6 +175,9 @@ def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshol
                 for txt in txt_data:
                     line = " ".join(map(str, txt))
                     f.write(line + "\n")
+            num_labels += 1
+    
+    return num_labels
         
 if __name__ == "__main__":
     model = YOLO("complete_model/base.pt")

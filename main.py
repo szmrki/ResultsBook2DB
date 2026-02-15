@@ -26,6 +26,13 @@ from pathlib import Path
 from create_db import set_tables
 from worker import Worker
 import multiprocessing
+import logging
+from logger_config import setup_logging
+
+# ロギングの初期化
+setup_logging()
+logger = logging.getLogger(__name__)
+logger.info("Application starting...")
 
 # ---------------------------------------------------------
 # ドラッグ＆ドロップ専用のカスタムラベルを作成
@@ -442,7 +449,7 @@ class MainWindow(QMainWindow):
             added += 1
         
         self.file_table.blockSignals(False)
-        print(f"{added}個のファイルを追加 (合計: {len(self.file_entries)}個)")
+        logger.info(f"{added}個のファイルを追加 (合計: {len(self.file_entries)}個)")
 
     def on_table_cell_changed(self, row, column) -> None:
         """テーブルのEvent Name列が編集された時の処理"""
@@ -467,7 +474,7 @@ class MainWindow(QMainWindow):
         if not self.file_entries:
             self.drop_area.clear()
         
-        print(f"残りファイル数: {len(self.file_entries)}")
+        logger.info(f"残りファイル数: {len(self.file_entries)}")
 
     def start_analysis(self) -> None:
         """
@@ -506,12 +513,12 @@ class MainWindow(QMainWindow):
                 if ret == QMessageBox.StandardButton.No:
                     return
                 else:
-                    print(f"既存接続モード: {db_path}")
+                    logger.info(f"既存接続モード: {db_path}")
             else:
-                print(f"新規作成モード: {db_path}")
+                logger.info(f"新規作成モード: {db_path}")
                 set_tables(str(db_path), is_md=self.is_md)
         else:
-            print(f"既存接続モード: {db_path}")
+            logger.info(f"既存接続モード: {db_path}")
 
         # -------------------------------------------------------
         # ここでバックグラウンド処理(QThread)を開始

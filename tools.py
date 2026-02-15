@@ -8,6 +8,9 @@ import pdfplumber
 import yaml
 import random
 import shutil
+import logging
+
+logger = logging.getLogger(__name__)
 
 def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model, is_md=False) -> tuple[np.ndarray, 
                                                 list[dict[str, int, str, str, str, int]]]:
@@ -60,8 +63,8 @@ def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model, is_md=False) 
                 "x": missing_bbox.x0,
                 "y": missing_bbox.y0,
             })
-            #print("x0=", shotbyshot_list[-1]["x"])
-            #print("y0=", shotbyshot_list[-1]["y"])
+            #logger.debug(f"x0={shotbyshot_list[-1]['x']}")
+            #logger.debug(f"y0={shotbyshot_list[-1]['y']}")
 
     # 上→下、左→右でソート(投球順に合わせる)
     shotbyshot_list.sort(key=lambda im: (im["y"], im["x"]))
@@ -120,6 +123,11 @@ def extract_game_result(page, is_md=False) -> pd.DataFrame:
     df = pd.DataFrame([[__try_int(cell) for cell in row] for row in table], columns=columns)
     df.insert(0, "team", [team_red, team_yellow])
 
+    if df.empty:
+        logger.warning("Extracted game result dataframe is empty.")
+    else:
+        logger.debug(f"Successfully extracted game result:\n{df}")
+    
     if is_md:
         return df, power_play_ends
     return df
@@ -213,6 +221,24 @@ def get_hammer(scores: pd.DataFrame, is_md=False) -> list[int]:
 
     for end in range(1, total_ends):
         str_end = str(end)
+
+        #先に数値かどうか判定してから、ハンマーの処理を行う
+        val0 = scores.at[0, str_end]
+        val1 = scores.at[1, str_end]
+        if str(val0).isdigit() and str(val1).isdigit():
+            if int(val0) > int(val1): #team0が得点した場合
+                hammer_list.append(1)
+            elif int(val0) < int(val1): #team1が得点した場合
+                hammer_list.append(0)
+            else: #ブランクの場合
+                if is_md:
+                    hammer_list.append(1-hammer_list[-1])  #前のエンドから交代
+                else:
+                    hammer_list.append(hammer_list[-1])    #前のエンドと同じ
+        else:  #コンシード等で数値が入力されていない場合
+            hammer_list.append(None)
+
+        """
         try:
             if int(scores.at[0, str_end]) > int(scores.at[1, str_end]): #team0が得点した場合
                 hammer_list.append(1)
@@ -225,16 +251,19 @@ def get_hammer(scores: pd.DataFrame, is_md=False) -> list[int]:
                     hammer_list.append(hammer_list[-1])    #前のエンドと同じ
         except ValueError:
             hammer_list.append(None)
+        """
 
     return hammer_list
 
-def save_images(doc: fitz.open, output_dir: Path, save_num: int) -> None:
+def save_images(doc: fitz.open, output_dir: Path, save_num: int) -> int:
     """
         PDFからシート画像を指定した枚数抽出し保存する
         Args:
             doc : PyMuPDFのオブジェクト
             output_dir : 画像出力先ディレクトリ名
             save_num : 保存する枚数
+        Returns:
+            int : 保存した枚数
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     num_images = 0
@@ -253,6 +282,7 @@ def save_images(doc: fitz.open, output_dir: Path, save_num: int) -> None:
             num_images += len(shotbyshot_list)
             if num_images >= save_num: break
         else: continue
+    return num_images
 
 def __extract_images(doc: fitz.Document, page: fitz.Page) -> tuple[list, list]:
     """
@@ -344,7 +374,7 @@ def split_train_val(image_dir: Path, label_dir: Path, train_ratio=0.8, seed=42) 
 
         # ラベルが無い場合はスキップ
         if not lbl_path.exists():
-            print(f"[警告] ラベルが無いためスキップ: {img_name}")
+            logger.warning(f"ラベルが無いためスキップ: {img_name}")
             continue
 
         # train or val に振り分け
@@ -433,7 +463,7 @@ def __found_missing_bbox(bboxes) -> list[fitz.Rect]:
         expected.add((x, ys[2]))
     
     missing = expected - actual
-    print("欠落している画像位置:", missing)
+    logger.info(f"欠落している画像位置: {missing}")
 
     # 幅・高さの推定（最も安定）
     # 同じ行の既存画像と比較する

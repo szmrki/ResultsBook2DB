@@ -6,6 +6,9 @@ from tools import *
 import sys
 from itertools import zip_longest
 import io
+import logging
+
+logger = logging.getLogger(__name__)
 
 resource_path = lambda p: Path(getattr(
     sys, '_MEIPASS', os.path.abspath(os.path.dirname(__file__))
@@ -43,6 +46,7 @@ class Worker(QThread):
             # 処理本体
             self.conn = sqlite3.connect(self.db_path)
             
+            start_time_all = time.time()
             total = len(self.pdf_entries)
             errors = []
             
@@ -51,18 +55,20 @@ class Worker(QThread):
                 tournament_name = entry["event_name"]
                 prefix = f"[{i}/{total}] "
                 
-                self.progress_signal.emit(0, f"{prefix}{entry['path'].name} - 準備中...")
-                
                 try:
                     success = self.executemodel(pdf_path, tournament_name, prefix)
                     if not success:
-                        errors.append(f"{entry['path'].name}: Event Name が既に使用されています")
+                        err_msg = f"{entry['path'].name}: Event Name '{tournament_name}' は既に使用されています"
+                        errors.append(err_msg)
+                        logger.error(err_msg)
                 except Exception as e:
                     error_msg = traceback.format_exc()
                     errors.append(f"{entry['path'].name}: {e}")
-                    print(error_msg)
+                    logger.error(error_msg)
             
             self.conn.close()
+            elapsed_all = time.time() - start_time_all
+            logger.info(f"All processes completed in {elapsed_all:.2f}s")
             
             if errors:
                 error_text = "\n".join(errors)
@@ -80,7 +86,7 @@ class Worker(QThread):
             # エラーが起きたら詳細を画面に送る
             error_msg = traceback.format_exc()
             self.error_signal.emit(f"An error has occurred.\n{e}\n{error_msg}")
-            print(error_msg)
+            logger.error(error_msg)
 
         self.visible_signal.emit(False)
         self.progress_signal.emit(0, "")
@@ -109,18 +115,20 @@ class Worker(QThread):
             cur.execute('INSERT INTO events(name) VALUES (?)', (game,)) #eventテーブルに大会の名前を記述
         except sqlite3.IntegrityError:
             self.conn.rollback()
+            logger.warning(f"Duplicate event name found in database: {game}")
             return False
 
         event_id = cur.lastrowid #event_idを取得
 
         doc = fitz.open(pdf_path)
-        print(pdf_path)
+        logger.info(f"Processing PDF: {pdf_path}")
 
         #モデルの定義
         #該当の大会についてファインチューニング済みであればそれを用いる
         game_pt = model_dir / f"{game}.pt"
         if not game_pt.exists():
         #if False:
+            start_time_ft = time.time()
             self.progress_signal.emit(0, f"{prefix}Preparing fine-tuning...")
             model = YOLO(resource_path(model_dir / "base.pt")) #ベースモデルを選択
         
@@ -129,10 +137,16 @@ class Worker(QThread):
             image_dir = dataset_dir / "images"
             label_dir = dataset_dir / "labels"
             yaml_path = work_dir / "yaml" / "data.yaml"     
-            save_images(doc, output_dir=image_dir, save_num=400)
-            create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir, threshold=0.75)
-            split_train_val(image_dir, label_dir, train_ratio=0.8)
-            create_yaml(yaml_path, dataset_dir)
+            
+            try:
+                num_images = save_images(doc, output_dir=image_dir, save_num=400)
+                num_labels = create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir, threshold=0.75)
+                logger.info(f"Dataset prepared: {num_labels} pseudo labels from {num_images} images.")
+                split_train_val(image_dir, label_dir, train_ratio=0.8)
+                create_yaml(yaml_path, dataset_dir)
+            except Exception as e:
+                logger.error(f"Failed to prepare dataset for fine-tuning: {e}")
+                raise
 
             # コールバック関数を定義 ---
             def on_train_epoch_end(trainer):
@@ -144,38 +158,64 @@ class Worker(QThread):
             model.add_callback("on_train_epoch_end", on_train_epoch_end)
 
             ### 疑似ラベルを用いてモデルのファインチューニングを行う
-            model.train(
-                data=resource_path(yaml_path),    # データセット（train/val のパスを含む）
-                epochs=50,
-                imgsz=600,
-                iou=0.3,
-                conf=0.5,
-                save=True,
-                exist_ok=True,
-                workers=0,      #動作安定のため、シングルスレッドによる実行
-                patience=10,     #Early Stoppingを10エポックに設定
-            )
+            try:
+                logger.info(f"Starting fine-tuning for event: {game}")
+                results = model.train(
+                    data=resource_path(yaml_path),    # データセット（train/val のパスを含む）
+                    epochs=50,
+                    imgsz=600,
+                    iou=0.3,
+                    conf=0.5,
+                    save=True,
+                    exist_ok=True,
+                    workers=0,      #動作安定のため、シングルスレッドによる実行
+                    patience=10,     #Early Stoppingを10エポックに設定
+                )
+                # 学習結果の要約をログに記録
+                if results and hasattr(results, 'results_dict'):
+                    map50 = results.results_dict.get('metrics/mAP50(B)', 'N/A')
+                    map50_95 = results.results_dict.get('metrics/mAP50-95(B)', 'N/A')
+                    logger.info(f"Fine-tuning complete. Results: mAP50={map50}, mAP50-95={map50_95}")
+                else:
+                    logger.info("Fine-tuning complete. Accuracy metrics not available.")
+            except Exception as e:
+                logger.error(f"Fine-tuning failed for event '{game}': {e}")
+                logger.error(traceback.format_exc())
+                model.clear_callback("on_train_epoch_end")
+                raise
 
             Path(game_pt).unlink(missing_ok=True) #game_ptが存在する場合削除
             try:
                 #best.ptをcomplete_modelにコピーし、大会名にリネーム
                 shutil.copy2(Path("runs/detect/train/weights/best.pt"), game_pt)
-            except FileNotFoundError:
-                model.save(game_pt)
+                logger.info(f"Successfully saved fine-tuned model as {game_pt.name}")
+            except Exception as e:
+                logger.warning(f"Could not copy best.pt to {game_pt.name}: {e}. Attempting direct save.")
+                try:
+                    model.save(game_pt)
+                except Exception as save_e:
+                    logger.error(f"Failed to save model directly: {save_e}")
+                    raise
             
             #画像とラベルを削除
-            delete_files(image_dir / "train")
-            delete_files(label_dir / "train")
-            delete_files(image_dir / "val")
-            delete_files(label_dir / "val")
+            try:
+                delete_files(image_dir / "train")
+                delete_files(label_dir / "train")
+                delete_files(image_dir / "val")
+                delete_files(label_dir / "val")
+            except Exception as e:
+                logger.warning(f"Failed to clean up dataset directories: {e}")
 
             # 後始末
             model.clear_callback("on_train_epoch_end")
+            elapsed_ft = time.time() - start_time_ft
+            logger.info(f"[{game}] Fine-tuning complete (took {elapsed_ft:.2f}s).")
             self.progress_signal.emit(100, f"{prefix}Fine-tuning complete.")
         else: pass
         #break
         model = YOLO(game_pt) #ファインチューニング済みモデルをロード
 
+        start_time_det = time.time()
         with pdfplumber.open(pdf_path) as pdf:
             for pn in range(doc.page_count):
                 self.progress_signal.emit(int(pn/doc.page_count*100), f"{prefix}Extracting data...")
@@ -184,17 +224,18 @@ class Worker(QThread):
                 page_mu = doc[pn]
                 text = page_mu.get_text()
                 if "Game Results" in text: #新たな試合
-                    print(f"Game Results page: {page_num}")
-                    
                     if self.is_md:
                         scores, power_play_ends = extract_game_result(page_plumber, self.is_md) #得点表のdfとPPエンドのリスト
                     else:
                         scores = extract_game_result(page_plumber) #得点表のdf
-                    print(scores)
+                    
                     hammers = get_hammer(scores, self.is_md)  #各エンドのハンマー情報
-                    print(hammers)
                     team_red = scores.at[0, "team"]
                     team_yellow = scores.at[1, "team"]
+                    game_context = f"{team_red} vs {team_yellow}"
+                    logger.debug(f"Scores:\n{scores}")
+                    logger.debug(f"Hammers: {hammers}")
+                    logger.info(f"[{game_context}] - Game Results page: {page_num}")
                     try:
                         fin_red = int(scores.at[0, "Total"]) #得点表のdfから最終得点を記録
                         fin_yellow = int(scores.at[1, "Total"])
@@ -251,13 +292,9 @@ class Worker(QThread):
                                 (game_id, num_end))
                     end_id = cur.fetchone()[0]
                     
-                    print(f"Shot-by-Shot page: {page_num}")
+                    
                     stones_end, shot_info = extract_shotbyshot(doc, page_mu, model, self.is_md)
-                    #print(stones_end[0])
-                    #count += len(shot_info)
-                    #count2 += stones_end.shape[0]
-                    #print(shot_info)
-                    print("num shots: ", len(shot_info))
+                    logger.info(f"[{game_context}] End {num_end} - Shot-by-Shot page: {page_num} - Number of shots: {len(shot_info)}")
 
                     for shot_num, (stones, info) in enumerate(zip_longest(stones_end, shot_info), start=1):
                         if info is not None: #正常時
@@ -290,4 +327,6 @@ class Worker(QThread):
                     continue
         doc.close()
         self.conn.commit()
+        elapsed_det = time.time() - start_time_det
+        logger.info(f"[{game}] Detection complete (took {elapsed_det:.2f}s).")
         return True
