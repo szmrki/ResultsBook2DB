@@ -181,14 +181,16 @@ class Worker(QThread):
                     patience=5,     # Early Stoppingを5エポックに設定
                 )
                 # 学習結果の要約をログに記録
+                final_epoch = model.trainer.epoch + 1
                 if results and hasattr(results, 'results_dict'):
                     map50 = results.results_dict.get('metrics/mAP50(B)', 'N/A')
                     map50_95 = results.results_dict.get('metrics/mAP50-95(B)', 'N/A')
                     precision = results.results_dict.get('metrics/precision(B)', 'N/A')
                     recall = results.results_dict.get('metrics/recall(B)', 'N/A')
-                    logger.info(f"Fine-tuning complete. Results: mAP50={map50:.6f}, mAP50-95={map50_95:.6f}, Precision={precision:.6f}, Recall={recall:.6f}")
+                    logger.info(f"""Fine-tuning complete ({final_epoch} epochs). 
+                    Results: mAP50={map50:.6f}, mAP50-95={map50_95:.6f}, Precision={precision:.6f}, Recall={recall:.6f}""")
                 else:
-                    logger.info("Fine-tuning complete. Accuracy metrics not available.")
+                    logger.info(f"Fine-tuning complete ({final_epoch} epochs). Accuracy metrics not available.")
             except Exception as e:
                 logger.error(f"Fine-tuning failed for event '{game}': {e}")
                 logger.error(traceback.format_exc())
