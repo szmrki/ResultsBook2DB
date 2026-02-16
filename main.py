@@ -359,7 +359,7 @@ class MainWindow(QMainWindow):
         #self.file_table.viewport().setCursor(Qt.CursorShape.PointingHandCursor) # テーブル内を指マークにする
         self.file_table.setMinimumHeight(100)
         self.file_table.setMaximumHeight(200)
-        self.file_table.cellChanged.connect(self.on_table_cell_changed)
+        # self.file_table.cellChanged.connect(self.on_table_cell_changed)
         layout.addWidget(self.file_table)
 
         layout.addSpacing(10)
@@ -443,19 +443,20 @@ class MainWindow(QMainWindow):
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.file_table.setItem(row, 0, name_item)
             
-            # Event Name（編集可能）
+            # Event Name（読み取り専用）
             event_item = QTableWidgetItem(event_name)
+            event_item.setFlags(event_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.file_table.setItem(row, 1, event_item)
             added += 1
         
         self.file_table.blockSignals(False)
         logger.info(f"{added}個のファイルを追加 (合計: {len(self.file_entries)}個)")
 
-    def on_table_cell_changed(self, row, column) -> None:
-        """テーブルのEvent Name列が編集された時の処理"""
-        if column == 1 and row < len(self.file_entries):
-            new_name = self.file_table.item(row, 1).text().strip()
-            self.file_entries[row]["event_name"] = new_name
+    # def on_table_cell_changed(self, row, column) -> None:
+    #     """テーブルのEvent Name列が編集された時の処理"""
+    #     if column == 1 and row < len(self.file_entries):
+    #         new_name = self.file_table.item(row, 1).text().strip()
+    #         self.file_entries[row]["event_name"] = new_name
 
     def delete_selected_files(self) -> None:
         """選択されたファイルをテーブルから削除"""
@@ -489,8 +490,7 @@ class MainWindow(QMainWindow):
         for entry in self.file_entries:
             if not entry["event_name"]:
                 QMessageBox.warning(self, "入力エラー", 
-                    f"{entry['path'].name} のEvent Nameが入力されていません。\n"
-                    "テーブルのEvent Name列をダブルクリックして編集してください。")
+                    f"{entry['path'].name} のEvent Nameを特定できませんでした。")
                 return
             if not entry["path"].exists():
                 QMessageBox.warning(self, "入力エラー", 
