@@ -43,6 +43,12 @@ class Worker(QThread):
             # --- 処理開始の通知 ---
             self.visible_signal.emit(True)
             self.progress_signal.emit(0, "Loading...")
+
+            # セッション開始時に runs/detect ディレクトリをクリア
+            runs_dir = Path("runs/detect")
+            if runs_dir.exists():
+                logger.info(f"Cleaning up runs directory: {runs_dir}")
+                shutil.rmtree(runs_dir)
             
             # 処理本体
             self.conn = sqlite3.connect(self.db_path)
@@ -170,9 +176,9 @@ class Worker(QThread):
                     iou=0.3,
                     conf=0.5,
                     save=True,
-                    exist_ok=True,
-                    workers=0,      #動作安定のため、シングルスレッドによる実行
-                    patience=5,     #Early Stoppingを5エポックに設定
+                    exist_ok=False, # フォルダを自動でインクリメント(train, train2...)
+                    workers=0,      # 動作安定のため、シングルスレッドによる実行
+                    patience=5,     # Early Stoppingを5エポックに設定
                 )
                 # 学習結果の要約をログに記録
                 if results and hasattr(results, 'results_dict'):
@@ -191,9 +197,11 @@ class Worker(QThread):
 
             Path(game_pt).unlink(missing_ok=True) #game_ptが存在する場合削除
             try:
-                #best.ptをcomplete_modelにコピーし、大会名にリネーム
-                shutil.copy2(Path("runs/detect/train/weights/best.pt"), game_pt)
-                logger.info(f"Successfully saved fine-tuned model as {game_pt.name}")
+                # model.trainer.save_dir から実際の保存先を取得してコピー
+                save_dir = Path(model.trainer.save_dir)
+                best_pt = save_dir / "weights" / "best.pt"
+                shutil.copy2(best_pt, game_pt)
+                logger.info(f"Successfully saved fine-tuned model from {best_pt} as {game_pt.name}")
             except Exception as e:
                 logger.warning(f"Could not copy best.pt to {game_pt.name}: {e}. Attempting direct save.")
                 try:
@@ -341,7 +349,7 @@ class Worker(QThread):
         year_match = re.search(r'\d{4}', game)
         year = int(year_match.group()) if year_match else None
         
-        # カテゴリの特定（ユーザーが実装予定）
+        # カテゴリの特定
         category = None
         if self.is_md:
             category = "MD"

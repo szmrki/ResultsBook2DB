@@ -558,11 +558,12 @@ if __name__ == "__main__":
         exist_ok=True,
     )
     game_pt = model_dir / "OWG2022.pt"
+    save_pt = Path(model.trainer.save_dir) / "weights" / "best.pt"
     try:
         #best.ptをcomplete_modelに移動し、大会名にリネーム
         if game_pt.is_file():
             game_pt.unlink()
-        Path("runs/detect/train/weights/best.pt").rename(game_pt) 
+        save_pt.rename(game_pt) 
     except FileNotFoundError:
         model.save(game_pt)
 
