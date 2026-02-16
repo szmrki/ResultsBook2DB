@@ -175,7 +175,9 @@ class Worker(QThread):
                 if results and hasattr(results, 'results_dict'):
                     map50 = results.results_dict.get('metrics/mAP50(B)', 'N/A')
                     map50_95 = results.results_dict.get('metrics/mAP50-95(B)', 'N/A')
-                    logger.info(f"Fine-tuning complete. Results: mAP50={map50}, mAP50-95={map50_95}")
+                    precision = results.results_dict.get('metrics/precision(B)', 'N/A')
+                    recall = results.results_dict.get('metrics/recall(B)', 'N/A')
+                    logger.info(f"Fine-tuning complete. Results: mAP50={map50:.6f}, mAP50-95={map50_95:.6f}, Precision={precision:.6f}, Recall={recall:.6f}")
                 else:
                     logger.info("Fine-tuning complete. Accuracy metrics not available.")
             except Exception as e:
@@ -294,7 +296,7 @@ class Worker(QThread):
                     
                     
                     stones_end, shot_info = extract_shotbyshot(doc, page_mu, model, self.is_md)
-                    logger.info(f"[{game_context}] End {num_end} - Shot-by-Shot page: {page_num} - Number of shots: {len(shot_info)}")
+                    logger.info(f"[{game_context}] End {num_end} - Shot-by-Shot page: {page_num} - Number of shots: {max(len(stones_end), len(shot_info))}")
 
                     for shot_num, (stones, info) in enumerate(zip_longest(stones_end, shot_info), start=1):
                         if info is not None: #正常時

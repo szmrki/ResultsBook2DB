@@ -44,7 +44,12 @@ def get_stones_pos(img, model) -> np.ndarray:
     img[:20,1:-2] = 255
     img[-19:,1:-2] = 255  
 
-    results = model(img, iou=0.3, conf=0.5) #modelに通す
+    results = model(img, 
+                    iou=0.3, 
+                    conf=0.5, 
+                    save=False,
+                    exist_ok=True,
+                ) #modelに通す
                 
     # 中心座標リスト
     centers = []
@@ -76,49 +81,6 @@ def get_stones_pos(img, model) -> np.ndarray:
         stones = np.vstack([stones, padding]) #(16,6)
 
     return stones
-
-def get_hammer_img(img_path, is_md=False, game=None) -> str: 
-    """
-        画像ベースで各エンドの1投目終了時にハンマーの色を取得するメソッド
-        Args:
-            img_path : シート画像のファイルパス
-            is_md : MDのときはハンマーの取得方法が変わる
-            year : MDのときは年によっても異なる
-        Returns:
-            str : "red" or "yellow"
-    """
-    img = cv2.imread(img_path)
-    #必要であれば反転
-    row20 = img[20,:,:]
-    black_pixels = np.all(row20==0, axis=1) 
-    if np.all(black_pixels[1:WIDTH]):  #左右1ピクセルが余白の可能性があるため
-        img = cv2.flip(img, -1)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) #RGBに変換
-    roi = img[-20:]
-
-    red_bin = cv2.inRange(roi, (240,0,0), (255,0,0)) #赤を取得
-    #red_area = np.count_nonzero(red_bin)
-    red_area = cv2.countNonZero(red_bin)
-
-    black_bin = cv2.inRange(roi, (0,0,0), (10,10,10)) #黒を取得
-    white_bin =cv2.inRange(roi, (240,240,240), (255,255,255)) #白を取得
-
-    mask_any = red_bin | black_bin | white_bin  # 赤・黒・白のピクセルを1にする
-    mask_not = cv2.bitwise_not(mask_any)          # 反転して、対象外のピクセルを1に
-    yellow_area = cv2.countNonZero(mask_not) #黄色の面積を赤・黒・白以外の面積とする
-
-    #print(f"red: {red_area}, yellow: {yellow_area}")
-    #MDの2017年以降は描かれ方が異なる
-    if is_md and (game != "WMDCC2016"):
-        if red_area >= yellow_area:
-            return "yellow"
-        else:
-            return "red"
-    else:        
-        if red_area >= yellow_area:
-            return "red"
-        else:
-            return "yellow"
 
 def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshold=0.8) -> int:
     """
@@ -181,5 +143,4 @@ def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshol
         
 if __name__ == "__main__":
     model = YOLO("complete_model/base.pt")
-    #get_hammer_img("rb_data/data_md/WMDCC2024/WMDCC2024_ResultsBook-12_5.png", model)
     create_pseudo_label(model, image_dir=Path("tmp/tmp2"), output_dir=Path("yolo_dataset"), threshold=0.75)
