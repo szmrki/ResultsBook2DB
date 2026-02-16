@@ -187,10 +187,9 @@ class Worker(QThread):
                     map50_95 = results.results_dict.get('metrics/mAP50-95(B)', 'N/A')
                     precision = results.results_dict.get('metrics/precision(B)', 'N/A')
                     recall = results.results_dict.get('metrics/recall(B)', 'N/A')
-                    logger.info(f"""Fine-tuning complete ({final_epoch} epochs). 
-                    Results: mAP50={map50:.6f}, mAP50-95={map50_95:.6f}, Precision={precision:.6f}, Recall={recall:.6f}""")
+                    logger.info(f"""Fine-tuning complete. Results: mAP50={map50:.6f}, mAP50-95={map50_95:.6f}, Precision={precision:.6f}, Recall={recall:.6f}""")
                 else:
-                    logger.info(f"Fine-tuning complete ({final_epoch} epochs). Accuracy metrics not available.")
+                    logger.info(f"Fine-tuning complete. Accuracy metrics not available.")
             except Exception as e:
                 logger.error(f"Fine-tuning failed for event '{game}': {e}")
                 logger.error(traceback.format_exc())
@@ -224,7 +223,7 @@ class Worker(QThread):
             # 後始末
             model.clear_callback("on_train_epoch_end")
             elapsed_ft = time.time() - start_time_ft
-            logger.info(f"[{game}] Fine-tuning complete (took {elapsed_ft:.2f}s).")
+            logger.info(f"[{game}] Fine-tuning complete ({final_epoch} epochs) (took {elapsed_ft:.2f}s).")
             self.progress_signal.emit(100, f"{prefix}Fine-tuning complete.")
         else: pass
         #break
