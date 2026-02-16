@@ -11,7 +11,7 @@ def set_tables(dbname: str, is_md: bool = False):
     )
     cur.execute(
         '''CREATE TABLE games(id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER NOT NULL, page INTEGER, 
-        team_red STRING, team_yellow STRING,final_score_red INTEGER,final_score_yellow INTEGER)'''
+        team_red STRING, team_yellow STRING, final_score_red INTEGER, final_score_yellow INTEGER)'''
     )
     if is_md:
         cur.execute(

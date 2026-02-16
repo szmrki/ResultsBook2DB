@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QTableWidget, QTableWidgetItem, QHeaderView,
                              QAbstractItemView)
 from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent, QCursor
 from pathlib import Path
 from create_db import set_tables
 from worker import Worker
@@ -219,6 +219,7 @@ class DatabaseSelector(QWidget):
         self.folder_input.setReadOnly(True)
         self.btn_browse_folder = QPushButton("フォルダ変更...")
         self.btn_browse_folder.setCursor(Qt.CursorShape.PointingHandCursor)
+        #self.btn_browse_folder.setCursor(QCursor(Qt.PointingHandCursor))
         self.btn_browse_folder.clicked.connect(self.select_folder)
         
         folder_layout.addWidget(self.folder_input)
@@ -334,7 +335,7 @@ class MainWindow(QMainWindow):
 
         # 削除ボタン
         self.delete_button = QPushButton("選択したファイルを削除")
-        self.delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        #self.delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.delete_button.setStyleSheet("""
             QPushButton {
                 background-color: #d9534f;
@@ -377,7 +378,7 @@ class MainWindow(QMainWindow):
         layout.addSpacing(20)
 
         self.run_button = QPushButton("Start")
-        self.run_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        #self.run_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.run_button.setHeight = 50
         # ボタンを目立たせるスタイルシート
         self.run_button.setStyleSheet("""     

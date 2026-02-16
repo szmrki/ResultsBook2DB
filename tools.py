@@ -97,8 +97,17 @@ def extract_game_result(page, is_md=False) -> pd.DataFrame:
     #print(text)
     team_texts = re.findall(r'\b[A-Z]{3} - [^\s\n]+\b', text) #チーム名取得条件を緩和
     #print(team_texts)
-    team_red = team_texts[0]
-    team_yellow = team_texts[1]
+    if len(team_texts) == 0:
+        logger.warning("Team names not found.")
+        team_red = None
+        team_yellow = None
+    elif len(team_texts) == 1:
+        logger.warning("Team yellow names not found.")
+        team_red = team_texts[0]
+        team_yellow = None
+    else:
+        team_red = team_texts[0]
+        team_yellow = team_texts[1]
     
     if is_md:
         power_play_ends = []
