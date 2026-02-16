@@ -28,7 +28,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='ResultsBook2DB',
+    name='RB2DB',
     debug=True,
     bootloader_ignore_signals=False,
     strip=False,

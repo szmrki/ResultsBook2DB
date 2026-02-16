@@ -36,7 +36,7 @@ Windows では、`.exe` ファイルを作成できます。
     ```powershell
     pyinstaller main_production.spec
     ```
-    ビルドが完了すると、`dist\ResultsBook2DB` フォルダが生成されます。中の `ResultsBook2DB.exe` を実行して動作確認してください。  
+    ビルドが完了すると、`dist\ResultsBook2DB` フォルダが生成されます。中の `RB2DB.exe` を実行して動作確認してください。  
     適宜ショートカットを作成してください。
 
 ## 2. macOS でのビルド
@@ -85,8 +85,9 @@ Ubuntu 等の Linux 環境向けの手順です。
     pyinstaller main_production.spec
     ```
     完了すると `dist/ResultsBook2DB` フォルダが生成されます。
+    - **本体ファイル**: `dist/ResultsBook2DB/RB2DB`
 
 5.  **実行**
     ```bash
-    ./dist/ResultsBook2DB/ResultsBook2DB
+    ./dist/ResultsBook2DB/RB2DB
     ```
