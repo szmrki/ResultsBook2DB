@@ -414,10 +414,10 @@ class MainWindow(QMainWindow):
             大会名は大文字略称＋年度＋(Men or Women)
         """
         text = filename.split('_')[0].upper()
-        if "Men" in filename:
-            text += "Men"
-        elif "Women" in filename:
+        if "women" in filename.lower():
             text += "Women"
+        elif "men" in filename.lower():
+            text += "Men"
         return text
 
     def update_file_paths(self, paths: list) -> None:

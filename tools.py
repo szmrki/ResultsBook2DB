@@ -238,21 +238,6 @@ def get_hammer(scores: pd.DataFrame, is_md=False) -> list[int]:
         else:  #コンシード等で数値が入力されていない場合
             hammer_list.append(None)
 
-        """
-        try:
-            if int(scores.at[0, str_end]) > int(scores.at[1, str_end]): #team0が得点した場合
-                hammer_list.append(1)
-            elif int(scores.at[0, str_end]) < int(scores.at[1, str_end]): #team1が得点した場合
-                hammer_list.append(0)
-            else: #ブランクの場合
-                if is_md:
-                    hammer_list.append(1-hammer_list[-1])  #前のエンドから交代
-                else:
-                    hammer_list.append(hammer_list[-1])    #前のエンドと同じ
-        except ValueError:
-            hammer_list.append(None)
-        """
-
     return hammer_list
 
 def save_images(doc: fitz.open, output_dir: Path, save_num: int) -> int:
