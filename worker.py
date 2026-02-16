@@ -7,6 +7,7 @@ import sys
 from itertools import zip_longest
 import io
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +112,10 @@ class Worker(QThread):
         model_dir = resource_path(Path("complete_model"))
 
         cur = self.conn.cursor()
-        try:    
-            cur.execute('INSERT INTO events(name) VALUES (?)', (game,)) #eventテーブルに大会の名前を記述
+        try:
+            #eventテーブルに大会名、年、カテゴリを記述
+            year, category = self.__extract_year_and_category(game)
+            cur.execute('INSERT INTO events(name, year, category) VALUES (?, ?, ?)', (game, year, category)) 
         except sqlite3.IntegrityError:
             self.conn.rollback()
             logger.warning(f"Duplicate event name found in database: {game}")
@@ -294,7 +297,6 @@ class Worker(QThread):
                                 (game_id, num_end))
                     end_id = cur.fetchone()[0]
                     
-                    
                     stones_end, shot_info = extract_shotbyshot(doc, page_mu, model, self.is_md)
                     logger.info(f"[{game_context}] End {num_end} - Shot-by-Shot page: {page_num} - Number of shots: {max(len(stones_end), len(shot_info))}")
 
@@ -305,6 +307,7 @@ class Worker(QThread):
                         else: #ショット情報が取れない場合はNULLを挿入し、ストーン配置のみ保存する
                             shot_type = None; percent_score = None
                             turn = None; team = None; player_name = None
+                            logger.warning(f"[{game_context}] End {num_end} - Shot {shot_num} - Shot info not found")
 
                         shot_color = num2color[(hammers[num_end - 1] + (shot_num % 2)) % 2] #現在のショットの色を指定
                         cur.execute("""INSERT INTO shots(end_id, number, color, team, player_name, 
@@ -332,3 +335,32 @@ class Worker(QThread):
         elapsed_det = time.time() - start_time_det
         logger.info(f"[{game}] Detection complete (took {elapsed_det:.2f}s).")
         return True
+
+    def __extract_year_and_category(self, game):
+        # 大会名(game)から西暦(year)を抽出
+        year_match = re.search(r'\d{4}', game)
+        year = int(year_match.group()) if year_match else None
+        
+        # カテゴリの特定（ユーザーが実装予定）
+        category = None
+        if self.is_md:
+            category = "MD"
+        else:
+            if "WJCC" in game:
+                if "Women" in game:
+                    category = "Junior Women"
+                elif "Men" in game:
+                    category = "Junior Men"
+            else:
+                if "Women" in game:
+                    category = "Women"
+                elif "Men" in game:
+                    category = "Men"
+                else:
+                    if "WMCC" in game:
+                        category = "Men"
+                    elif "WWCC" in game:
+                        category = "Women"
+                    else:
+                        category = None
+        return year, category

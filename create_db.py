@@ -6,8 +6,9 @@ def set_tables(dbname: str, is_md: bool = False):
     conn = sqlite3.connect(dbname)
     cur = conn.cursor()
     cur.execute(
-        '''CREATE TABLE events(id INTEGER PRIMARY KEY AUTOINCREMENT, name STRING NOT NULL UNIQUE)'''
-        )
+        '''CREATE TABLE events(id INTEGER PRIMARY KEY AUTOINCREMENT, name STRING NOT NULL UNIQUE, 
+        year INTEGER, category STRING)'''
+    )
     cur.execute(
         '''CREATE TABLE games(id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER NOT NULL, page INTEGER, 
         team_red STRING, team_yellow STRING,final_score_red INTEGER,final_score_yellow INTEGER)'''
