@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QFileDialog, QMessageBox, QFormLayout, QGroupBox, 
                              QRadioButton, QButtonGroup, QProgressBar,
                              QTableWidget, QTableWidgetItem, QHeaderView,
-                             QAbstractItemView, QPlainTextEdit)
+                             QAbstractItemView, QPlainTextEdit, QSizePolicy)
 from PySide6.QtCore import Qt, Signal, QTimer, QSize
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent, QFont, QColor, QTextCursor, QCursor
 from pathlib import Path
@@ -28,10 +28,10 @@ from create_db import set_tables
 from worker import Worker
 import multiprocessing
 import logging
-from logger_config import setup_logging
+from logger_config import setup_logging, add_qt_handler
 
-# ロギングの初期化
-setup_logging()
+# ロギングの初期化（戻り値の log_file_path を add_qt_handler に渡す用に保持）
+LOG_FILE_PATH = setup_logging()
 logger = logging.getLogger(__name__)
 logger.info("Application starting...")
 
@@ -292,6 +292,8 @@ class DatabaseSelector(QWidget):
 # メインウィンドウ
 # ---------------------------------------------------------
 class MainWindow(QMainWindow):
+    log_signal = Signal(str, int) # メッセージ, ログレベル
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("ResultsBook2DB")
@@ -303,6 +305,15 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         main_layout.setSpacing(15)
         main_layout.setContentsMargins(20, 20, 20, 20)
+
+        # log_viewer を先に作成（add_qt_handler 内の logging で log_write が呼ばれるため）
+        self.log_viewer = QPlainTextEdit()
+        self.log_viewer.setReadOnly(True)
+        self.log_viewer.setPlaceholderText("ここに詳細なログが表示されます...")
+        self.log_viewer.setStyleSheet("background-color: #2c3e50; color: #ecf0f1; font-family: 'Consolas', 'Monaco', monospace; font-size: 11px;")
+
+        self.log_signal.connect(self._handle_log_signal)
+        add_qt_handler(lambda msg, level: self.log_signal.emit(msg, level), log_file_path=LOG_FILE_PATH)
 
         self.file_entries = []
 
@@ -369,9 +380,21 @@ class MainWindow(QMainWindow):
         self.run_button.clicked.connect(self.start_analysis)
         step3_layout.addWidget(self.run_button)
 
+        # プログレス領域を1つのコンテナにまとめ、表示時は高さを確保・非表示時は高さ0で重なりを防ぐ
+        self.progress_container = QWidget()
+        progress_container_layout = QVBoxLayout(self.progress_container)
+        progress_container_layout.setContentsMargins(0, 4, 0, 0)
+        progress_container_layout.setSpacing(2)
         self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        step3_layout.addWidget(self.progress_bar)
+        self.progress_bar.setFixedHeight(22)
+        self.progress_label = QLabel("")
+        self.progress_label.setStyleSheet("color: #555; font-size: 12px;")
+        self.progress_label.setMinimumHeight(18)
+        progress_container_layout.addWidget(self.progress_bar)
+        progress_container_layout.addWidget(self.progress_label)
+        self.progress_container.setMaximumHeight(0)
+        self.progress_container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        step3_layout.addWidget(self.progress_container)
         
         main_layout.addWidget(step3_group)
 
@@ -379,11 +402,6 @@ class MainWindow(QMainWindow):
         log_label = QLabel("処理ログ:")
         log_label.setStyleSheet("font-weight: bold; color: #555;")
         main_layout.addWidget(log_label)
-        
-        self.log_viewer = QPlainTextEdit()
-        self.log_viewer.setReadOnly(True)
-        self.log_viewer.setPlaceholderText("ここに詳細なログが表示されます...")
-        self.log_viewer.setStyleSheet("background-color: #2c3e50; color: #ecf0f1; font-family: 'Consolas', 'Monaco', monospace; font-size: 11px;")
         main_layout.addWidget(self.log_viewer)
 
         main_layout.addStretch()
@@ -665,19 +683,36 @@ class MainWindow(QMainWindow):
         now = datetime.datetime.now().strftime("%H:%M:%S")
         
         self.log_viewer.moveCursor(QTextCursor.MoveOperation.End)
-        if color:
-            fmt = self.log_viewer.currentCharFormat()
-            fmt.setForeground(color)
-            self.log_viewer.setCurrentCharFormat(fmt)
+        
+        # 色の指定がない場合はデフォルト（またはログレベルに応じた色）
+        if not color:
+            color = QColor("#E0E0E0") # デフォルトの薄いグレー
+
+        fmt = self.log_viewer.currentCharFormat()
+        fmt.setForeground(color)
+        self.log_viewer.setCurrentCharFormat(fmt)
         
         self.log_viewer.insertPlainText(f"[{now}] {msg}\n")
         self.log_viewer.moveCursor(QTextCursor.MoveOperation.End)
 
+    def _handle_log_signal(self, msg: str, level: int) -> None:
+        """ロギングシステムから送られてきたメッセージを処理する"""
+        color = None
+        if level >= logging.ERROR:
+            color = QColor("#FF5252") # Red
+        elif level >= logging.WARNING:
+            color = QColor("#FFD740") # Amber
+        elif level >= logging.INFO:
+            # INFOログは通常の色
+            color = QColor("#E0E0E0")
+            
+        self.log_write(msg, color)
+
     # --- 以下、スレッドから呼ばれる関数 ---
     def update_progress(self, val, msg) -> None:
-        """進捗バーとログを更新"""
+        """進捗バーとその直下のラベルを更新（短い文言はログに出さず、logger 経由の詳細だけログに表示）"""
         self.progress_bar.setValue(val)
-        self.log_write(msg)
+        self.progress_label.setText(msg)
 
     def analysis_finished(self, msg) -> None:
         """完了時の処理"""
@@ -698,8 +733,13 @@ class MainWindow(QMainWindow):
         self.worker = None
 
     def progress_bar_set_visible(self, visible: bool) -> None:
-        """プログレスバーの表示/非表示切替"""
-        self.progress_bar.setVisible(visible)
+        """プログレスバーと進捗メッセージの表示/非表示切替（コンテナの高さでレイアウトを安定させる）"""
+        if visible:
+            self.progress_container.setMaximumHeight(60)
+            self.progress_bar.setValue(0)
+        else:
+            self.progress_container.setMaximumHeight(0)
+            self.progress_label.setText("")
 
 # アプリケーション起動
 if __name__ == "__main__":

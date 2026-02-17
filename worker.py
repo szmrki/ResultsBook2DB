@@ -54,10 +54,11 @@ class Worker(QThread):
             self.conn = sqlite3.connect(self.db_path)
             
             start_time_all = time.time()
-            total = len(self.pdf_entries)
             errors = []
             
             for i, entry in enumerate(self.pdf_entries, start=1):
+                # 解析中にファイルが追加された場合も分母を現在の総数に合わせる（[2/2] のように表示）
+                total = max(len(self.pdf_entries), i)
                 pdf_path = str(entry["path"])
                 tournament_name = entry["event_name"]
                 prefix = f"[{i}/{total}] "
