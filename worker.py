@@ -140,7 +140,12 @@ class Worker(QThread):
         #if False:
             start_time_ft = time.time()
             self.progress_signal.emit(0, f"{prefix}Preparing fine-tuning...")
-            model = YOLO(resource_path(model_dir / "base.pt")) #ベースモデルを選択
+
+            base_model_path = resource_path(model_dir / "base.pt")
+            if not base_model_path.exists():
+                 raise FileNotFoundError(f"Base model not found at {base_model_path}. Please ensure 'complete_model/base.pt' exists.")
+
+            model = YOLO(base_model_path) #ベースモデルを選択
         
             ### PDFファイルから画像を400枚程度抽出し、予測を行い疑似ラベルを生成
             dataset_dir = work_dir / "yolo_dataset"

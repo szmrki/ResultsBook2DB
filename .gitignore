@@ -13,7 +13,8 @@ inference.py
 *.pt
 build/
 dist/
-complete_model/
+complete_model/*
+!complete_model/base.pt
 main_testing.spec
 pdf_convert.py
 myreadme.txt

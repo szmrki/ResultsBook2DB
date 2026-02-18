@@ -11,7 +11,9 @@
 ## 必要要件
 
 *   Python 3.12+ (動作確認済み)
+*   Python 3.12+ (動作確認済み)
 *   推奨環境: GPU搭載 PC
+*   **モデルファイル**: `complete_model/base.pt` が存在すること (git clone時に自動的に含まれます)
 
 ## ビルド
 
