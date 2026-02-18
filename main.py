@@ -14,23 +14,24 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import sys
+import datetime
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                              QFileDialog, QMessageBox, QFormLayout, QGroupBox, 
                              QRadioButton, QButtonGroup, QProgressBar,
                              QTableWidget, QTableWidgetItem, QHeaderView,
-                             QAbstractItemView)
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent, QCursor
+                             QAbstractItemView, QPlainTextEdit, QSizePolicy)
+from PySide6.QtCore import Qt, Signal, QTimer, QSize
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent, QFont, QColor, QTextCursor, QCursor
 from pathlib import Path
 from create_db import set_tables
 from worker import Worker
 import multiprocessing
 import logging
-from logger_config import setup_logging
+from logger_config import setup_logging, add_qt_handler
 
-# ロギングの初期化
-setup_logging()
+# ロギングの初期化（戻り値の log_file_path を add_qt_handler に渡す用に保持）
+LOG_FILE_PATH = setup_logging()
 logger = logging.getLogger(__name__)
 logger.info("Application starting...")
 
@@ -40,60 +41,53 @@ logger.info("Application starting...")
 class FileDropLabel(QLabel):
     # ファイルがドロップされたことをメイン画面に知らせるシグナル
     filesDropped = Signal(list)
-
     def __init__(self) -> None:
         super().__init__()
         self.setText("\nここにPDFファイルをドラッグ&ドロップ\nまたはクリックして選択\n")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        # マウスを乗せた時に「指マーク」にする
+        self.setMinimumHeight(100)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.init_label = """
-            QLabel {
-                border: 2px dashed #aaa;
-                border-radius: 10px;
-                background-color: #f9f9f9;
-                color: #555;
-                font-size: 14px;
-            }
-            QLabel:hover {
-                background-color: #e0e0e0;
-                border-color: #0078D7;
-            }
-        """
-        
-        # デザイン設定（点線の枠線、背景色など）
-        self.setStyleSheet(self.init_label)
-        
+
         # ドロップを受け付ける設定
         self.setAcceptDrops(True)
+        self.update_style(False)
 
-    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        """ドラッグされたものがエリアに入った時の処理"""
-        if event.mimeData().hasUrls():
-            # ファイルなら受け入れる
-            event.accept()
+    def update_style(self, active: bool) -> None:
+        if active:
             self.setStyleSheet("""
                 QLabel {
                     border: 2px dashed #0078D7;
-                    border-radius: 10px;
+                    border-radius: 8px;
                     background-color: #eaf4ff;
+                    color: #0078D7;
                     font-size: 14px;
+                    font-weight: bold;
                 }
             """)
         else:
+            self.setStyleSheet("""
+                QLabel {
+                    border: 2px dashed #ccc;
+                    border-radius: 8px;
+                    background-color: #ffffff;
+                    color: #666;
+                    font-size: 14px;
+                }
+                QLabel:hover {
+                    border-color: #0078D7;
+                    background-color: #f0f7ff;
+                }
+            """)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if event.mimeData().hasUrls():
+            event.accept()
+            self.update_style(True)
+        else:
             event.ignore()
 
-    def dragLeaveEvent(self) -> None:
-        """ドラッグがエリアから出た時の処理（デザインを戻す）"""
-        self.setStyleSheet("""
-            QLabel {
-                border: 2px dashed #aaa;
-                border-radius: 10px;
-                background-color: #f9f9f9;
-                font-size: 14px;      
-            }
-        """)
+    def dragLeaveEvent(self, event) -> None:
+        self.update_style(False)
 
     def dropEvent(self, event: QDropEvent) -> None:
         """ドロップされた時の処理（複数ファイル対応）"""
@@ -149,7 +143,7 @@ class FileDropLabel(QLabel):
     def clear(self) -> None:
         """ラベルを初期状態に戻す"""
         self.setText("\nここにPDFファイルをドラッグ&ドロップ\nまたはクリックして選択\n")
-        self.setStyleSheet(self.init_label)
+        self.update_style(False)
 
 #データベース
 class DatabaseSelector(QWidget):
@@ -294,120 +288,212 @@ class DatabaseSelector(QWidget):
             full_path = Path(folder) / path_name
             return (full_path, True)
 
+# ---------------------------------------------------------
 # メインウィンドウ
+# ---------------------------------------------------------
 class MainWindow(QMainWindow):
+    log_signal = Signal(str, int) # メッセージ, ログレベル
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("ResultsBook2DB")
-        self.setGeometry(100, 100, 600, 500)
-        self.setFixedWidth(600)
+        self.setMinimumSize(700, 600)
+        self.setup_styles()
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(20, 20, 20, 20)
 
-        # 全体のレイアウト (縦並び)
-        layout = QVBoxLayout()
-        central_widget.setLayout(layout)
+        # log_viewer を先に作成（add_qt_handler 内の logging で log_write が呼ばれるため）
+        self.log_viewer = QPlainTextEdit()
+        self.log_viewer.setReadOnly(True)
+        self.log_viewer.setPlaceholderText("ここに詳細なログが表示されます...")
+        self.log_viewer.setStyleSheet("background-color: #2c3e50; color: #ecf0f1; font-family: 'Consolas', 'Monaco', monospace; font-size: 11px;")
 
-        self.file_entries = []  # list of {"path": Path, "event_name": str}
+        self.log_signal.connect(self._handle_log_signal)
+        add_qt_handler(lambda msg, level: self.log_signal.emit(msg, level), log_file_path=LOG_FILE_PATH)
 
-        # -----------------
-        # 入力エリア
-        # -----------------
-        # DB選択エリアを追加
+        self.file_entries = []
+
+        # --- Step 1: Database Setup ---
         self.db_selector = DatabaseSelector()
-        layout.addWidget(self.db_selector)
+        main_layout.addWidget(self.db_selector)
 
-        # カスタムドロップエリアの配置
+        # --- Step 2: PDF Selection ---
+        step2_group = QGroupBox("PDFファイルの選択")
+        step2_layout = QVBoxLayout(step2_group)
+        
         self.drop_area = FileDropLabel()
-        # シグナルを受け取って変数を更新する関数につなぐ
         self.drop_area.filesDropped.connect(self.update_file_paths)
-        layout.addWidget(self.drop_area)
+        step2_layout.addWidget(self.drop_area)
 
-        # -----------------
-        # ファイル一覧テーブル
-        # -----------------
-        table_header_layout = QHBoxLayout()
-        table_label = QLabel("選択されたPDFファイル:")
-        table_label.setStyleSheet("font-weight: bold; margin-top: 5px;")
-        table_header_layout.addWidget(table_label)
-        table_header_layout.addStretch()
+        # Table Header (label + buttons)
+        table_header = QHBoxLayout()
+        table_label = QLabel("選択済みファイル:")
+        table_label.setStyleSheet("font-weight: bold;")
+        table_header.addWidget(table_label)
+        table_header.addStretch()
 
-        # 削除ボタン
-        self.delete_button = QPushButton("選択したファイルを削除")
-        #self.delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.delete_button.setStyleSheet("""
-            QPushButton {
-                background-color: #d9534f;
-                color: white;
-                padding: 4px 8px;
-                border-radius: 3px;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #c9302c;
-            }
-        """)
+        self.clear_all_button = QPushButton("すべてクリア")
+        self.clear_all_button.setObjectName("secondaryButton")
+        self.clear_all_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clear_all_button.clicked.connect(self.clear_all_files)
+        table_header.addWidget(self.clear_all_button)
+
+        self.delete_button = QPushButton("選択削除")
+        self.delete_button.setObjectName("dangerButton")
+        self.delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.delete_button.clicked.connect(self.delete_selected_files)
-        table_header_layout.addWidget(self.delete_button)
-        layout.addLayout(table_header_layout)
+        table_header.addWidget(self.delete_button)
+        
+        step2_layout.addLayout(table_header)
 
         self.file_table = QTableWidget(0, 2)
         self.file_table.setHorizontalHeaderLabels(["ファイル名", "Event Name"])
         self.file_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.file_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.file_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        #self.file_table.viewport().setCursor(Qt.CursorShape.PointingHandCursor) # テーブル内を指マークにする
-        self.file_table.setMinimumHeight(100)
-        self.file_table.setMaximumHeight(200)
-        # self.file_table.cellChanged.connect(self.on_table_cell_changed)
-        layout.addWidget(self.file_table)
+        self.file_table.setMaximumHeight(180)
+        self.file_table.cellChanged.connect(self.on_table_cell_changed)
+        step2_layout.addWidget(self.file_table)
+        
+        main_layout.addWidget(step2_group)
 
-        layout.addSpacing(10)
-
-        #MDかどうかのラジオボタン
+        # --- Step 3: Analysis Config & Run ---
+        step3_group = QGroupBox("解析設定と実行")
+        step3_layout = QVBoxLayout(step3_group)
+        
+        config_layout = QHBoxLayout()
         md_layout, self.md_btn_group = self.__set_radio_button("4人制", "MD", default=0)
-        self.is_md = False #デフォルトは4人制
-        layout.addLayout(md_layout)
+        self.is_md = False
         self.md_btn_group.idClicked.connect(self.md_clicked)
+        config_layout.addLayout(md_layout)
+        config_layout.addStretch()
+        step3_layout.addLayout(config_layout)
 
-        # ---------------------------------------------------------
-        # 実行アクションエリア
-        # ---------------------------------------------------------
-        # 少し余白を空ける
-        layout.addSpacing(20)
+        self.run_button = QPushButton("解析を開始")
+        self.run_button.setObjectName("primaryButton")
+        self.run_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.run_button.setMinimumHeight(40)
+        self.run_button.clicked.connect(self.start_analysis)
+        step3_layout.addWidget(self.run_button)
 
-        self.run_button = QPushButton("Start")
-        #self.run_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.run_button.setHeight = 50
-        # ボタンを目立たせるスタイルシート
-        self.run_button.setStyleSheet("""     
-                QPushButton {
-                background-color: #0078D7;
-                color: white;
+        # プログレス領域を1つのコンテナにまとめ、表示時は高さを確保・非表示時は高さ0で重なりを防ぐ
+        self.progress_container = QWidget()
+        progress_container_layout = QVBoxLayout(self.progress_container)
+        progress_container_layout.setContentsMargins(0, 4, 0, 0)
+        progress_container_layout.setSpacing(2)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(22)
+        self.progress_label = QLabel("")
+        self.progress_label.setStyleSheet("color: #555; font-size: 12px;")
+        self.progress_label.setMinimumHeight(18)
+        progress_container_layout.addWidget(self.progress_bar)
+        progress_container_layout.addWidget(self.progress_label)
+        self.progress_container.setMaximumHeight(0)
+        self.progress_container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        step3_layout.addWidget(self.progress_container)
+        
+        main_layout.addWidget(step3_group)
+
+        # --- Console Logs ---
+        log_label = QLabel("処理ログ:")
+        log_label.setStyleSheet("font-weight: bold; color: #555;")
+        main_layout.addWidget(log_label)
+        main_layout.addWidget(self.log_viewer)
+
+        main_layout.addStretch()
+
+        self.worker = None
+
+    def setup_styles(self):
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #f8f9fa;
+            }
+            QGroupBox {
+                font-size: 14px;
                 font-weight: bold;
-                padding: 6px;
-                border-radius: 5px;
-                font-size: 18px;
+                border: 1px solid #dee2e6;
+                border-radius: 8px;
+                margin-top: 1.2em;
+                padding-top: 10px;
+                background-color: white;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 8px;
+                left: 12px;
+                color: #0078D7;
+            }
+            QPushButton {
+                padding: 6px 12px;
+                border-radius: 4px;
+                font-weight: bold;
+                border: 1px solid #ced4da;
+                background-color: #ffffff;
             }
             QPushButton:hover {
-                background-color: #005A9E;
+                background-color: #e9ecef;
+            }
+            QPushButton#primaryButton {
+                background-color: #0078D7;
+                color: white;
+                border: none;
+                font-size: 16px;
+            }
+            QPushButton#primaryButton:hover {
+                background-color: #005a9e;
+            }
+            QPushButton#primaryButton:disabled {
+                background-color: #ccc;
+            }
+            QPushButton#secondaryButton {
+                color: #495057;
+            }
+            QPushButton#dangerButton {
+                background-color: #fff;
+                color: #dc3545;
+                border-color: #dc3545;
+            }
+            QPushButton#dangerButton:hover {
+                background-color: #dc3545;
+                color: white;
+            }
+            QLineEdit {
+                padding: 6px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+            }
+            QTableWidget {
+                border: 1px solid #dee2e6;
+                gridline-color: #f1f3f5;
+                background-color: white;
+            }
+            QHeaderView::section {
+                background-color: #f8f9fa;
+                padding: 4px;
+                border: 1px solid #dee2e6;
+                font-weight: bold;
+            }
+            QProgressBar {
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+                text-align: center;
+                background-color: #f8f9fa;
+                height: 15px;
+            }
+            QProgressBar::chunk {
+                background-color: #28a745;
+                border-radius: 3px;
+            }
+            QRadioButton {
+                spacing: 8px;
             }
         """)
-        self.run_button.clicked.connect(self.start_analysis)
-        layout.addWidget(self.run_button)
-
-        # プログレスバーを追加、最初は隠しておく
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar) 
-        
-        self.worker = None # スレッド保持用変数
-
-        # 下部にスペースを埋めるための伸縮アイテム
-        layout.addStretch()
 
     def predict_event_name(self, filename: str) -> str:
         """
@@ -453,11 +539,18 @@ class MainWindow(QMainWindow):
         self.file_table.blockSignals(False)
         logger.info(f"{added}個のファイルを追加 (合計: {len(self.file_entries)}個)")
 
-    # def on_table_cell_changed(self, row, column) -> None:
-    #     """テーブルのEvent Name列が編集された時の処理"""
-    #     if column == 1 and row < len(self.file_entries):
-    #         new_name = self.file_table.item(row, 1).text().strip()
-    #         self.file_entries[row]["event_name"] = new_name
+    def on_table_cell_changed(self, row, column) -> None:
+        """テーブルのEvent Name列が編集された時の処理"""
+        if column == 1 and row < len(self.file_entries):
+            new_name = self.file_table.item(row, 1).text().strip()
+            self.file_entries[row]["event_name"] = new_name
+
+    def clear_all_files(self) -> None:
+        """全ての選択済みファイルをクリア"""
+        self.file_table.setRowCount(0)
+        self.file_entries.clear()
+        self.drop_area.clear()
+        self.log_write("ファイル一覧をクリアしました。")
 
     def delete_selected_files(self) -> None:
         """選択されたファイルをテーブルから削除"""
@@ -469,9 +562,11 @@ class MainWindow(QMainWindow):
             return
         
         for row in selected_rows:
-            self.file_table.removeRow(row)
             if row < len(self.file_entries):
+                name = self.file_entries[row]["path"].name
+                self.file_table.removeRow(row)
                 self.file_entries.pop(row)
+                self.log_write(f"削除しました: {name}")
         
         if not self.file_entries:
             self.drop_area.clear()
@@ -583,44 +678,68 @@ class MainWindow(QMainWindow):
         elif button_id == 1:
             self.is_md = True
 
+    def log_write(self, msg: str, color: QColor = None) -> None:
+        """ログビューアにメッセージを書き込む"""
+        now = datetime.datetime.now().strftime("%H:%M:%S")
+        
+        self.log_viewer.moveCursor(QTextCursor.MoveOperation.End)
+        
+        # 色の指定がない場合はデフォルト（またはログレベルに応じた色）
+        if not color:
+            color = QColor("#E0E0E0") # デフォルトの薄いグレー
+
+        fmt = self.log_viewer.currentCharFormat()
+        fmt.setForeground(color)
+        self.log_viewer.setCurrentCharFormat(fmt)
+        
+        self.log_viewer.insertPlainText(f"[{now}] {msg}\n")
+        self.log_viewer.moveCursor(QTextCursor.MoveOperation.End)
+
+    def _handle_log_signal(self, msg: str, level: int) -> None:
+        """ロギングシステムから送られてきたメッセージを処理する"""
+        color = None
+        if level >= logging.ERROR:
+            color = QColor("#FF5252") # Red
+        elif level >= logging.WARNING:
+            color = QColor("#FFD740") # Amber
+        elif level >= logging.INFO:
+            # INFOログは通常の色
+            color = QColor("#E0E0E0")
+            
+        self.log_write(msg, color)
+
     # --- 以下、スレッドから呼ばれる関数 ---
     def update_progress(self, val, msg) -> None:
-        """
-            進捗バーとメッセージを更新
-        """
+        """進捗バーとその直下のラベルを更新（短い文言はログに出さず、logger 経由の詳細だけログに表示）"""
         self.progress_bar.setValue(val)
-        self.statusBar().showMessage(msg) # ステータスバーがある場合
-        # またはラベル等のテキストを更新
+        self.progress_label.setText(msg)
 
     def analysis_finished(self, msg) -> None:
-        """
-            完了時の処理
-        """
-        self.run_button.setEnabled(True) # ボタンを復活
+        """完了時の処理"""
+        self.run_button.setEnabled(True)
+        self.log_write(f"SUCCESS: {msg}", QColor("#2ecc71"))
         QMessageBox.information(self, "Complete", msg)
         self.progress_bar.setValue(100)
-        self.worker = None # 後始末
-        # テーブルとリストをクリア
+        self.worker = None
         self.file_entries.clear()
         self.file_table.setRowCount(0)
         self.drop_area.clear()
 
     def analysis_error(self, err_msg) -> None:
-        """
-            エラー時の処理
-        """
+        """エラー時の処理"""
         self.run_button.setEnabled(True)
+        self.log_write(f"ERROR: {err_msg}", QColor("#e74c3c"))
         QMessageBox.critical(self, "Error", err_msg)
         self.worker = None
 
     def progress_bar_set_visible(self, visible: bool) -> None:
-        """
-            プログレスバーの表示/非表示切替
-        """
-        self.progress_bar.setVisible(visible)
-        # 非表示の時だけウィンドウを縮める
-        if not visible:
-            QTimer.singleShot(0, self.adjustSize)
+        """プログレスバーと進捗メッセージの表示/非表示切替（コンテナの高さでレイアウトを安定させる）"""
+        if visible:
+            self.progress_container.setMaximumHeight(60)
+            self.progress_bar.setValue(0)
+        else:
+            self.progress_container.setMaximumHeight(0)
+            self.progress_label.setText("")
 
 # アプリケーション起動
 if __name__ == "__main__":
