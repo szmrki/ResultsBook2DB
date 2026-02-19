@@ -22,3 +22,6 @@ todo.txt
 Output/
 setup.iss
 logs/
+create_slides.py
+slides/
+docs/
