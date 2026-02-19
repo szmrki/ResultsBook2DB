@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QFileDialog, QMessageBox, QFormLayout, QGroupBox, 
                              QRadioButton, QButtonGroup, QProgressBar,
                              QTableWidget, QTableWidgetItem, QHeaderView,
-                             QAbstractItemView, QPlainTextEdit, QSizePolicy)
+                             QAbstractItemView, QPlainTextEdit, QSizePolicy, QScrollArea)
 from PySide6.QtCore import Qt, Signal, QTimer, QSize
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent, QFont, QColor, QTextCursor, QCursor
 from pathlib import Path
@@ -300,9 +300,18 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(700, 600)
         self.setup_styles()
 
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
+        self.setup_styles()
+
+        # --- Scroll Area Setup ---
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.setCentralWidget(self.scroll_area)
+
+        # Scroll Content Widget
+        self.scroll_content = QWidget()
+        self.scroll_area.setWidget(self.scroll_content)
+
+        main_layout = QVBoxLayout(self.scroll_content)
         main_layout.setSpacing(15)
         main_layout.setContentsMargins(20, 20, 20, 20)
 
