@@ -226,7 +226,7 @@ class DatabaseSelector(QWidget):
         
         # 拡張子ラベル (.db)
         ext_label = QLabel(".db")
-        ext_label.setStyleSheet("font-weight: bold; color: #555;")
+        ext_label.setStyleSheet("font-weight: bold; color: #333333;")
         
         filename_layout.addWidget(self.filename_input)
         filename_layout.addWidget(ext_label)
@@ -332,7 +332,7 @@ class MainWindow(QMainWindow):
         # Table Header (label + buttons)
         table_header = QHBoxLayout()
         table_label = QLabel("選択済みファイル:")
-        table_label.setStyleSheet("font-weight: bold;")
+        table_label.setStyleSheet("font-weight: bold; color: #333333;")
         table_header.addWidget(table_label)
         table_header.addStretch()
 
@@ -388,7 +388,7 @@ class MainWindow(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(22)
         self.progress_label = QLabel("")
-        self.progress_label.setStyleSheet("color: #555; font-size: 12px;")
+        self.progress_label.setStyleSheet("color: #333333; font-size: 12px;")
         self.progress_label.setMinimumHeight(18)
         progress_container_layout.addWidget(self.progress_bar)
         progress_container_layout.addWidget(self.progress_label)
@@ -400,7 +400,7 @@ class MainWindow(QMainWindow):
 
         # --- Console Logs ---
         log_label = QLabel("処理ログ:")
-        log_label.setStyleSheet("font-weight: bold; color: #555;")
+        log_label.setStyleSheet("font-weight: bold; color: #333333;")
         main_layout.addWidget(log_label)
         main_layout.addWidget(self.log_viewer)
 
@@ -412,6 +412,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #f8f9fa;
+                color: #333333;
             }
             QGroupBox {
                 font-size: 14px;
@@ -421,6 +422,7 @@ class MainWindow(QMainWindow):
                 margin-top: 1.2em;
                 padding-top: 10px;
                 background-color: white;
+                color: #333333;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
@@ -435,6 +437,7 @@ class MainWindow(QMainWindow):
                 font-weight: bold;
                 border: 1px solid #ced4da;
                 background-color: #ffffff;
+                color: #333333;
             }
             QPushButton:hover {
                 background-color: #e9ecef;
@@ -450,6 +453,7 @@ class MainWindow(QMainWindow):
             }
             QPushButton#primaryButton:disabled {
                 background-color: #ccc;
+                color: #666666;
             }
             QPushButton#secondaryButton {
                 color: #495057;
@@ -467,14 +471,18 @@ class MainWindow(QMainWindow):
                 padding: 6px;
                 border: 1px solid #ced4da;
                 border-radius: 4px;
+                color: #333333;
+                background-color: #ffffff;
             }
             QTableWidget {
                 border: 1px solid #dee2e6;
                 gridline-color: #f1f3f5;
                 background-color: white;
+                color: #333333;
             }
             QHeaderView::section {
                 background-color: #f8f9fa;
+                color: #333333;
                 padding: 4px;
                 border: 1px solid #dee2e6;
                 font-weight: bold;
@@ -484,6 +492,7 @@ class MainWindow(QMainWindow):
                 border-radius: 4px;
                 text-align: center;
                 background-color: #f8f9fa;
+                color: #333333;
                 height: 15px;
             }
             QProgressBar::chunk {
@@ -492,6 +501,10 @@ class MainWindow(QMainWindow):
             }
             QRadioButton {
                 spacing: 8px;
+                color: #333333;
+            }
+            QLabel {
+                color: #333333;
             }
         """)
 
