@@ -20,6 +20,7 @@ class Worker(QThread):
     progress_signal = Signal(int, str)  # 進捗率(%), メッセージ
     finished_signal = Signal(str)       # 完了時のメッセージ
     error_signal = Signal(str)          # エラー発生時のメッセージ
+    cancelled_signal = Signal()         # 中断時のシグナル
     visible_signal = Signal(bool)      # プログレスバーの表示/非表示
 
     def __init__(self, pdf_entries: list, db_path: Path, is_md=False) -> None:
@@ -57,6 +58,11 @@ class Worker(QThread):
             errors = []
             
             for i, entry in enumerate(self.pdf_entries, start=1):
+                # 中断チェック（ファイルごとのループ先頭）
+                if self.isInterruptionRequested():
+                    logger.info("Worker: 中断要求を検出しました。処理を停止します。")
+                    break
+
                 # 解析中にファイルが追加された場合も分母を現在の総数に合わせる（[2/2] のように表示）
                 total = max(len(self.pdf_entries), i)
                 pdf_path = str(entry["path"])
@@ -74,6 +80,15 @@ class Worker(QThread):
                     errors.append(f"{entry['path'].name}: {e}")
                     logger.error(error_msg)
             
+            # 中断された場合
+            if self.isInterruptionRequested():
+                self.conn.rollback()
+                self.conn.close()
+                self.cancelled_signal.emit()
+                self.visible_signal.emit(False)
+                self.progress_signal.emit(0, "")
+                return
+
             self.conn.close()
             elapsed_all = time.time() - start_time_all
             logger.info(f"All processes completed in {elapsed_all:.2f}s")
@@ -238,6 +253,10 @@ class Worker(QThread):
         start_time_det = time.time()
         with pdfplumber.open(pdf_path) as pdf:
             for pn in range(doc.page_count):
+                # 中断チェック（ページごとのループ先頭）
+                if self.isInterruptionRequested():
+                    logger.info("Worker: ページ処理中に中断要求を検出しました。")
+                    break
                 self.progress_signal.emit(int(pn/doc.page_count*100), f"{prefix}Extracting data...")
                 page_num = pn + 1
                 page_plumber = pdf.pages[pn]
