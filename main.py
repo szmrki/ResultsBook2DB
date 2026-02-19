@@ -506,6 +506,13 @@ class MainWindow(QMainWindow):
             QLabel {
                 color: #333333;
             }
+            QMessageBox {
+                background-color: #ffffff;
+                color: #333333;
+            }
+            QMessageBox QLabel {
+                color: #333333;
+            }
         """)
 
     def predict_event_name(self, filename: str) -> str:
