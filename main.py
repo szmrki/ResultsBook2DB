@@ -364,6 +364,7 @@ class MainWindow(QMainWindow):
         self.file_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.file_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.file_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.file_table.setMinimumHeight(110)
         self.file_table.setMaximumHeight(180)
         self.file_table.cellChanged.connect(self.on_table_cell_changed)
         step2_layout.addWidget(self.file_table)
@@ -416,6 +417,7 @@ class MainWindow(QMainWindow):
         main_layout.addStretch()
 
         self.worker = None
+        self._current_processing_index = -1  # 現在処理中のファイルインデックス（-1=未処理）
 
     def setup_styles(self):
         self.setStyleSheet("""
@@ -590,13 +592,21 @@ class MainWindow(QMainWindow):
         if not selected_rows:
             return
         
+        blocked = []
         for row in selected_rows:
-            if row < len(self.file_entries):
+            # 解析中 or 完了済みの行は削除禁止
+            if self._current_processing_index >= 0 and row <= self._current_processing_index:
+                blocked.append(row)
+            elif row < len(self.file_entries):
                 name = self.file_entries[row]["path"].name
                 self.file_table.removeRow(row)
                 self.file_entries.pop(row)
                 self.log_write(f"削除しました: {name}")
         
+        if blocked:
+            QMessageBox.warning(self, "削除不可",
+                "処理済みまたは処理中のファイルは削除できません。")
+
         if not self.file_entries:
             self.drop_area.clear()
         
@@ -662,7 +672,7 @@ class MainWindow(QMainWindow):
             return
 
         # 2. UIを「処理中モード」にする
-        self.run_button.setEnabled(False) # 二重押し防止
+        self.set_ui_locked(True)
         self.progress_bar.setValue(0)
 
         # 3. Workerスレッドを作成
@@ -672,10 +682,58 @@ class MainWindow(QMainWindow):
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.finished_signal.connect(self.analysis_finished)
         self.worker.error_signal.connect(self.analysis_error)
+        self.worker.cancelled_signal.connect(self.analysis_cancelled)
+        self.worker.file_index_signal.connect(self._on_file_index_changed)
         self.worker.visible_signal.connect(self.progress_bar_set_visible)
 
         # 5. スレッド開始
         self.worker.start()
+    
+    def request_cancel(self) -> None:
+        """中止ボタンが押されたときの処理"""
+        if self.worker and self.worker.isRunning():
+            ret = QMessageBox.warning(
+                self, "中止の確認",
+                "解析を中止しますか？\n\n"
+                "⚠️ 処理を中断すると、現在処理中の大会の\n"
+                "データはデータベースに保存されません。\n"
+                "（処理が完了したファイルは保存済みです）",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if ret == QMessageBox.StandardButton.Yes:
+                self.run_button.setEnabled(False)
+                self.run_button.setText("停止中...")
+                self.progress_label.setText("処理を中断しています…")
+                self.worker.requestInterruption()
+
+    def _on_file_index_changed(self, index: int) -> None:
+        """ワーカーから処理中インデックスを受け取る"""
+        self._current_processing_index = index
+
+    def set_ui_locked(self, locked: bool) -> None:
+        """解析中はUI操作を制限する"""
+        # ボタンのテキストと機能をトグル
+        if locked:
+            self.run_button.setText("中止")
+            self.run_button.setStyleSheet(
+                "background-color: #dc3545; color: white; border: none; font-size: 16px;"
+            )
+            self.run_button.setEnabled(True)
+            self.run_button.clicked.disconnect()
+            self.run_button.clicked.connect(self.request_cancel)
+        else:
+            self.run_button.setText("解析を開始")
+            self.run_button.setStyleSheet("")  # デフォルトのスタイルに戻す
+            self.run_button.setEnabled(True)
+            self.run_button.clicked.disconnect()
+            self.run_button.clicked.connect(self.start_analysis)
+
+        # その他のUI制限
+        self.clear_all_button.setEnabled(not locked)
+        self.db_selector.setEnabled(not locked)
+        for btn in self.md_btn_group.buttons():
+            btn.setEnabled(not locked)
     
     def __set_radio_button(self, txt1, txt2, default=0) -> tuple[QHBoxLayout, QButtonGroup]:
         mode_layout = QHBoxLayout()
@@ -745,7 +803,8 @@ class MainWindow(QMainWindow):
 
     def analysis_finished(self, msg) -> None:
         """完了時の処理"""
-        self.run_button.setEnabled(True)
+        self.set_ui_locked(False)
+        self._current_processing_index = -1
         self.log_write(f"SUCCESS: {msg}", QColor("#2ecc71"))
         QMessageBox.information(self, "Complete", msg)
         self.progress_bar.setValue(100)
@@ -756,10 +815,19 @@ class MainWindow(QMainWindow):
 
     def analysis_error(self, err_msg) -> None:
         """エラー時の処理"""
-        self.run_button.setEnabled(True)
+        self.set_ui_locked(False)
+        self._current_processing_index = -1
         self.log_write(f"ERROR: {err_msg}", QColor("#e74c3c"))
         QMessageBox.critical(self, "Error", err_msg)
         self.worker = None
+
+    def analysis_cancelled(self) -> None:
+        """中断時の処理"""
+        self.set_ui_locked(False)
+        self._current_processing_index = -1
+        self.worker = None
+        self.log_write("解析が中断されました。", QColor("#FFD740"))
+        self.progress_bar_set_visible(False)
 
     def progress_bar_set_visible(self, visible: bool) -> None:
         """プログレスバーと進捗メッセージの表示/非表示切替（コンテナの高さでレイアウトを安定させる）"""
@@ -770,6 +838,23 @@ class MainWindow(QMainWindow):
             self.progress_container.setMaximumHeight(0)
             self.progress_label.setText("")
 
+    def closeEvent(self, event) -> None:
+        """ウィンドウを閉じる前に解析中かどうか確認"""
+        if self.worker and self.worker.isRunning():
+            ret = QMessageBox.question(
+                self, "確認",
+                "解析が実行中です。\n処理を中断して終了しますか？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if ret == QMessageBox.StandardButton.Yes:
+                self.worker.requestInterruption()
+                self.worker.wait(3000)  # 最大3秒待機
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.accept()
 # アプリケーション起動
 if __name__ == "__main__":
     multiprocessing.freeze_support()
