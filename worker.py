@@ -80,7 +80,7 @@ class Worker(QThread):
                     errors.append(f"{entry['path'].name}: {e}")
                     logger.error(error_msg)
             
-            # 中断された場合
+            # 中断された場合（処理中ファイルの未コミット分をロールバック）
             if self.isInterruptionRequested():
                 self.conn.rollback()
                 self.conn.close()
@@ -183,6 +183,10 @@ class Worker(QThread):
                 curr = trainer.epoch + 1
                 total = trainer.epochs
                 self.progress_signal.emit(int(curr/total*100), f"{prefix}Fine-tuning...")
+                # 中断要求があれば、現在のエポック完了後に学習を安全に停止
+                if self.isInterruptionRequested():
+                    logger.info("Worker: ファインチューニング中に中断要求を検出。学習を停止します。")
+                    trainer.stop = True
 
             # コールバック登録
             model.add_callback("on_train_epoch_end", on_train_epoch_end)
@@ -365,9 +369,11 @@ class Worker(QThread):
                 else:
                     continue
         doc.close()
-        self.conn.commit()
-        elapsed_det = time.time() - start_time_det
-        logger.info(f"[{game}] Detection complete (took {elapsed_det:.2f}s).")
+        # 中断されていた場合はコミットせず、run側のロールバックに委ねる
+        if not self.isInterruptionRequested():
+            self.conn.commit()  # 1ファイル処理完了毎にコミット
+            elapsed_det = time.time() - start_time_det
+            logger.info(f"[{game}] Detection complete (took {elapsed_det:.2f}s).")
         return True
 
     def __extract_year_and_category(self, game):

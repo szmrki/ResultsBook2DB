@@ -681,10 +681,20 @@ class MainWindow(QMainWindow):
     def request_cancel(self) -> None:
         """中止ボタンが押されたときの処理"""
         if self.worker and self.worker.isRunning():
-            self.run_button.setEnabled(False)
-            self.run_button.setText("停止中...")
-            self.progress_label.setText("処理を中断しています…")
-            self.worker.requestInterruption()
+            ret = QMessageBox.warning(
+                self, "中止の確認",
+                "解析を中止しますか？\n\n"
+                "⚠️ 処理を中断すると、現在処理中の大会の\n"
+                "データはデータベースに保存されません。\n"
+                "（処理が完了したファイルは保存済みです）",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if ret == QMessageBox.StandardButton.Yes:
+                self.run_button.setEnabled(False)
+                self.run_button.setText("停止中...")
+                self.progress_label.setText("処理を中断しています…")
+                self.worker.requestInterruption()
 
     def set_ui_locked(self, locked: bool) -> None:
         """解析中はUI操作を制限する"""
