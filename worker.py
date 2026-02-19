@@ -21,6 +21,7 @@ class Worker(QThread):
     finished_signal = Signal(str)       # 完了時のメッセージ
     error_signal = Signal(str)          # エラー発生時のメッセージ
     cancelled_signal = Signal()         # 中断時のシグナル
+    file_index_signal = Signal(int)     # 現在処理中ファイルのインデックス（0始まり）
     visible_signal = Signal(bool)      # プログレスバーの表示/非表示
 
     def __init__(self, pdf_entries: list, db_path: Path, is_md=False) -> None:
@@ -60,8 +61,10 @@ class Worker(QThread):
             for i, entry in enumerate(self.pdf_entries, start=1):
                 # 中断チェック（ファイルごとのループ先頭）
                 if self.isInterruptionRequested():
-                    logger.info("Worker: 中断要求を検出しました。処理を停止します。")
                     break
+
+                # 現在処理中インデックスをUIに通知
+                self.file_index_signal.emit(i - 1)  # 0始まりに変換
 
                 # 解析中にファイルが追加された場合も分母を現在の総数に合わせる（[2/2] のように表示）
                 total = max(len(self.pdf_entries), i)
@@ -185,7 +188,6 @@ class Worker(QThread):
                 self.progress_signal.emit(int(curr/total*100), f"{prefix}Fine-tuning...")
                 # 中断要求があれば、現在のエポック完了後に学習を安全に停止
                 if self.isInterruptionRequested():
-                    logger.info("Worker: ファインチューニング中に中断要求を検出。学習を停止します。")
                     trainer.stop = True
 
             # コールバック登録
@@ -207,34 +209,37 @@ class Worker(QThread):
                 )
                 # 学習結果の要約をログに記録
                 final_epoch = model.trainer.epoch + 1
-                if results and hasattr(results, 'results_dict'):
-                    map50 = results.results_dict.get('metrics/mAP50(B)', 'N/A')
-                    map50_95 = results.results_dict.get('metrics/mAP50-95(B)', 'N/A')
-                    precision = results.results_dict.get('metrics/precision(B)', 'N/A')
-                    recall = results.results_dict.get('metrics/recall(B)', 'N/A')
-                    logger.info(f"""Fine-tuning complete. Results: mAP50={map50:.6f}, mAP50-95={map50_95:.6f}, Precision={precision:.6f}, Recall={recall:.6f}""")
-                else:
-                    logger.info(f"Fine-tuning complete. Accuracy metrics not available.")
+                if not self.isInterruptionRequested():
+                    if results and hasattr(results, 'results_dict'):
+                        map50 = results.results_dict.get('metrics/mAP50(B)', 'N/A')
+                        map50_95 = results.results_dict.get('metrics/mAP50-95(B)', 'N/A')
+                        precision = results.results_dict.get('metrics/precision(B)', 'N/A')
+                        recall = results.results_dict.get('metrics/recall(B)', 'N/A')
+                        logger.info(f"""Fine-tuning complete. Results: mAP50={map50:.6f}, mAP50-95={map50_95:.6f}, Precision={precision:.6f}, Recall={recall:.6f}""")
+                    else:
+                        logger.info(f"Fine-tuning complete. Accuracy metrics not available.")
             except Exception as e:
                 logger.error(f"Fine-tuning failed for event '{game}': {e}")
                 logger.error(traceback.format_exc())
                 model.clear_callback("on_train_epoch_end")
                 raise
 
-            Path(game_pt).unlink(missing_ok=True) #game_ptが存在する場合削除
-            try:
-                # model.trainer.save_dir から実際の保存先を取得してコピー
-                save_dir = Path(model.trainer.save_dir)
-                best_pt = save_dir / "weights" / "best.pt"
-                shutil.copy2(best_pt, game_pt)
-                logger.info(f"Successfully saved fine-tuned model from {best_pt} as {game_pt.name}")
-            except Exception as e:
-                logger.warning(f"Could not copy best.pt to {game_pt.name}: {e}. Attempting direct save.")
+            # 中断時は重みを保存しない
+            if not self.isInterruptionRequested():
+                Path(game_pt).unlink(missing_ok=True) #game_ptが存在する場合削除
                 try:
-                    model.save(game_pt)
-                except Exception as save_e:
-                    logger.error(f"Failed to save model directly: {save_e}")
-                    raise
+                    # model.trainer.save_dir から実際の保存先を取得してコピー
+                    save_dir = Path(model.trainer.save_dir)
+                    best_pt = save_dir / "weights" / "best.pt"
+                    shutil.copy2(best_pt, game_pt)
+                    logger.info(f"Successfully saved fine-tuned model from {best_pt} as {game_pt.name}")
+                except Exception as e:
+                    logger.warning(f"Could not copy best.pt to {game_pt.name}: {e}. Attempting direct save.")
+                    try:
+                        model.save(game_pt)
+                    except Exception as save_e:
+                        logger.error(f"Failed to save model directly: {save_e}")
+                        raise
             
             #画像とラベルを削除
             try:
@@ -247,9 +252,10 @@ class Worker(QThread):
 
             # 後始末
             model.clear_callback("on_train_epoch_end")
-            elapsed_ft = time.time() - start_time_ft
-            logger.info(f"[{game}] Fine-tuning complete ({final_epoch} epochs) (took {elapsed_ft:.2f}s).")
-            self.progress_signal.emit(100, f"{prefix}Fine-tuning complete.")
+            if not self.isInterruptionRequested():
+                elapsed_ft = time.time() - start_time_ft
+                logger.info(f"[{game}] Fine-tuning complete ({final_epoch} epochs) (took {elapsed_ft:.2f}s).")
+                self.progress_signal.emit(100, f"{prefix}Fine-tuning complete.")
         else: pass
         #break
         model = YOLO(game_pt) #ファインチューニング済みモデルをロード
@@ -259,7 +265,6 @@ class Worker(QThread):
             for pn in range(doc.page_count):
                 # 中断チェック（ページごとのループ先頭）
                 if self.isInterruptionRequested():
-                    logger.info("Worker: ページ処理中に中断要求を検出しました。")
                     break
                 self.progress_signal.emit(int(pn/doc.page_count*100), f"{prefix}Extracting data...")
                 page_num = pn + 1

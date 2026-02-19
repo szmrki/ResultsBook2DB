@@ -364,6 +364,7 @@ class MainWindow(QMainWindow):
         self.file_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.file_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.file_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.file_table.setMinimumHeight(110)
         self.file_table.setMaximumHeight(180)
         self.file_table.cellChanged.connect(self.on_table_cell_changed)
         step2_layout.addWidget(self.file_table)
@@ -416,6 +417,7 @@ class MainWindow(QMainWindow):
         main_layout.addStretch()
 
         self.worker = None
+        self._current_processing_index = -1  # 現在処理中のファイルインデックス（-1=未処理）
 
     def setup_styles(self):
         self.setStyleSheet("""
@@ -590,13 +592,21 @@ class MainWindow(QMainWindow):
         if not selected_rows:
             return
         
+        blocked = []
         for row in selected_rows:
-            if row < len(self.file_entries):
+            # 解析中 or 完了済みの行は削除禁止
+            if self._current_processing_index >= 0 and row <= self._current_processing_index:
+                blocked.append(row)
+            elif row < len(self.file_entries):
                 name = self.file_entries[row]["path"].name
                 self.file_table.removeRow(row)
                 self.file_entries.pop(row)
                 self.log_write(f"削除しました: {name}")
         
+        if blocked:
+            QMessageBox.warning(self, "削除不可",
+                "処理済みまたは処理中のファイルは削除できません。")
+
         if not self.file_entries:
             self.drop_area.clear()
         
@@ -673,6 +683,7 @@ class MainWindow(QMainWindow):
         self.worker.finished_signal.connect(self.analysis_finished)
         self.worker.error_signal.connect(self.analysis_error)
         self.worker.cancelled_signal.connect(self.analysis_cancelled)
+        self.worker.file_index_signal.connect(self._on_file_index_changed)
         self.worker.visible_signal.connect(self.progress_bar_set_visible)
 
         # 5. スレッド開始
@@ -695,6 +706,10 @@ class MainWindow(QMainWindow):
                 self.run_button.setText("停止中...")
                 self.progress_label.setText("処理を中断しています…")
                 self.worker.requestInterruption()
+
+    def _on_file_index_changed(self, index: int) -> None:
+        """ワーカーから処理中インデックスを受け取る"""
+        self._current_processing_index = index
 
     def set_ui_locked(self, locked: bool) -> None:
         """解析中はUI操作を制限する"""
@@ -789,6 +804,7 @@ class MainWindow(QMainWindow):
     def analysis_finished(self, msg) -> None:
         """完了時の処理"""
         self.set_ui_locked(False)
+        self._current_processing_index = -1
         self.log_write(f"SUCCESS: {msg}", QColor("#2ecc71"))
         QMessageBox.information(self, "Complete", msg)
         self.progress_bar.setValue(100)
@@ -800,6 +816,7 @@ class MainWindow(QMainWindow):
     def analysis_error(self, err_msg) -> None:
         """エラー時の処理"""
         self.set_ui_locked(False)
+        self._current_processing_index = -1
         self.log_write(f"ERROR: {err_msg}", QColor("#e74c3c"))
         QMessageBox.critical(self, "Error", err_msg)
         self.worker = None
@@ -807,6 +824,7 @@ class MainWindow(QMainWindow):
     def analysis_cancelled(self) -> None:
         """中断時の処理"""
         self.set_ui_locked(False)
+        self._current_processing_index = -1
         self.worker = None
         self.log_write("解析が中断されました。", QColor("#FFD740"))
         self.progress_bar_set_visible(False)
