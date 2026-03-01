@@ -1,8 +1,9 @@
 import sqlite3
 import os
 import sys
+from pathlib import Path
 
-def set_tables(dbname: str, is_md: bool = False):
+def set_tables(dbname: str | Path, is_md: bool = False) -> None:
     conn = sqlite3.connect(dbname)
     cur = conn.cursor()
     cur.execute(

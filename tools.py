@@ -9,11 +9,14 @@ import yaml
 import random
 import shutil
 import logging
+from ultralytics import YOLO
+from typing import Any
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model, is_md=False) -> tuple[np.ndarray, 
-                                                list[dict[str, int, str, str, str, int]]]:
+def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model: YOLO, is_md: bool = False) -> tuple[np.ndarray, 
+                                                list[dict[str, str | int | None]]]:
     """
         ページからショットバイショット画像を抽出するメソッド
         Args:
@@ -21,9 +24,9 @@ def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model, is_md=False) 
             page : PyMuPDFのページオブジェクト
             model : ストーン検出モデル
             is_md : MD or 4人制
-        Returns:
-            tuple[np.ndarray, list[tuple[str, str, str, str, int]]] : 
-                ストーン座標の配列（num_shots x 16 x 6）とショット情報のリスト
+    Returns:
+        tuple[np.ndarray, list[dict[str, str | int | None]]]: 
+            ストーン座標の配列（num_shots x 16 x 6）とショット情報のリスト
     """
     text = page.get_text()
     text = text.splitlines()
@@ -83,7 +86,7 @@ def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model, is_md=False) 
 
     return stones_end, shot_info_list
 
-def extract_game_result(page, is_md=False) -> pd.DataFrame:
+def extract_game_result(page: pdfplumber.page.Page, is_md: bool = False) -> pd.DataFrame | tuple[pd.DataFrame, list[int]]:
     """
         ページからゲーム結果のスコア表を抽出するメソッド
         Args:
@@ -141,14 +144,14 @@ def extract_game_result(page, is_md=False) -> pd.DataFrame:
         return df, power_play_ends
     return df
 
-def __get_shot_info(all_texts) -> list[dict[str, int, str, str, str, int]]:
+def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
     """
         ショットバイショットのテキスト情報から特定の投球の情報を取得する
         Args:     
             all_texts : ショットバイショットのすべてのテキスト情報のリスト
             #is_MD : MDかどうか
         Returns:
-            list[dict[str, int, str, str, str, int]] : 
+            list[dict[str, str | int | None]] : 
                 (チーム名, プレイヤー名, ショットタイプ, 回転方向, ショットスコア)の辞書のリスト
     """
     score_pattern = re.compile(r"^\d+%$|^-$")
@@ -202,14 +205,14 @@ def __get_shot_info(all_texts) -> list[dict[str, int, str, str, str, int]]:
     
     return shots
 
-def get_hammer(scores: pd.DataFrame, is_md=False) -> list[int]: 
+def get_hammer(scores: pd.DataFrame, is_md: bool = False) -> list[int | None]: 
     """
         スコア表ベースでエンドごとのハンマーのindexを取得する
         Args:
             score : スコア表のデータフレーム
             is_md : MDのときはハンマーの取得方法が変わる
         Returns:
-            list[int] : 0 or 1のリスト、長さはエンド数
+            list[int | None] : 0 or 1のリスト、長さはエンド数
     """
     #LSFE列に*があるチームがラストストーンエンド
     hammer_list = []
@@ -249,7 +252,7 @@ def get_hammer(scores: pd.DataFrame, is_md=False) -> list[int]:
 
     return hammer_list
 
-def save_images(doc: fitz.open, output_dir: Path, save_num: int) -> int:
+def save_images(doc: fitz.Document, output_dir: Path, save_num: int) -> int:
     """
         PDFからシート画像を指定した枚数抽出し保存する
         Args:
@@ -278,7 +281,7 @@ def save_images(doc: fitz.open, output_dir: Path, save_num: int) -> int:
         else: continue
     return num_images
 
-def __extract_images(doc: fitz.Document, page: fitz.Page) -> tuple[list, list]:
+def __extract_images(doc: fitz.Document, page: fitz.Page) -> tuple[list[dict[str, np.ndarray | float]], list[fitz.Rect]]:
     """
         PDFからシート画像を抽出し,辞書形式で保持する
         Args:
@@ -329,7 +332,7 @@ def __extract_images(doc: fitz.Document, page: fitz.Page) -> tuple[list, list]:
         })
     return shotbyshot_list, bboxes
 
-def split_train_val(image_dir: Path, label_dir: Path, train_ratio=0.8, seed=42) -> None:
+def split_train_val(image_dir: Path, label_dir: Path, train_ratio: float = 0.8, seed: int = 42) -> None:
     """
         画像とラベルを訓練用と検証用に分割する
         Args:
@@ -386,8 +389,8 @@ def split_train_val(image_dir: Path, label_dir: Path, train_ratio=0.8, seed=42) 
 def create_yaml(
         save_path: Path,
         dataset_root: Path,
-        train_path=Path("images/train"),
-        val_path=Path("images/val"),
+        train_path: Path = Path("images/train"),
+        val_path: Path = Path("images/val"),
         ) -> None:
     """
         YOLOの学習用のyamlファイルを作成する
@@ -410,7 +413,7 @@ def create_yaml(
     with open(save_path, "w", encoding="utf-8") as f:
         yaml.dump(yaml_dict, f, allow_unicode=True)
 
-def delete_files(dir) -> None:
+def delete_files(dir: str | Path) -> None:
     """
         指定されたディレクトリ内のすべてのファイルを削除する
         Args: 
@@ -422,13 +425,13 @@ def delete_files(dir) -> None:
             file.unlink()
 
 # 数値に変換できるものは int、できないものはそのまま
-def __try_int(x):
+def __try_int(x: Any) -> int | str:
     try:
         return int(x)
     except ValueError:
         return x
 
-def __found_missing_bbox(bboxes) -> list[fitz.Rect]:
+def __found_missing_bbox(bboxes: list[fitz.Rect]) -> list[fitz.Rect]:
     """
         検出できずに欠落している画像の位置を検出する
         Args: 

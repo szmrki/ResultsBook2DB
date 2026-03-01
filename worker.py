@@ -8,6 +8,8 @@ from itertools import zip_longest
 import io
 import logging
 import re
+from typing import Any
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,7 @@ class Worker(QThread):
     file_index_signal = Signal(int)     # 現在処理中ファイルのインデックス（0始まり）
     visible_signal = Signal(bool)      # プログレスバーの表示/非表示
 
-    def __init__(self, pdf_entries: list, db_path: Path, is_md=False) -> None:
+    def __init__(self, pdf_entries: list[dict[str, Any]], db_path: str | Path, is_md: bool = False) -> None:
         super().__init__()
         # pdf_entries: list of {"path": Path, "event_name": str}
         self.pdf_entries = pdf_entries
@@ -424,7 +426,7 @@ class Worker(QThread):
             logger.info(f"[{game}] Detection complete (took {elapsed_det:.2f}s).")
         return True
 
-    def __extract_year_and_category(self, game):
+    def __extract_year_and_category(self, game: str) -> tuple[int | None, str | None]:
         # 大会名(game)から西暦(year)を抽出
         year_match = re.search(r'\d{4}', game)
         year = int(year_match.group()) if year_match else None

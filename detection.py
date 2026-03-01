@@ -25,7 +25,7 @@ YB = DC3_TEE_LINE - YA * TEE_LINE
 
 #class_names = ["red", "yellow"]
 
-def get_stones_pos(img, model) -> np.ndarray:
+def get_stones_pos(img: np.ndarray, model: YOLO) -> np.ndarray:
     """
         ストーン座標をモデルを用いて取得する
         Args:
@@ -82,7 +82,7 @@ def get_stones_pos(img, model) -> np.ndarray:
 
     return stones
 
-def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshold=0.8) -> int:
+def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshold: float = 0.8) -> int:
     """
         既存のモデルを用いて予測を行い、疑似ラベルを生成する
         Args:

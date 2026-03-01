@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QTableWidget, QTableWidgetItem, QHeaderView,
                              QAbstractItemView, QPlainTextEdit, QSizePolicy, QScrollArea, QMenuBar, QMenu)
 from PySide6.QtCore import Qt, Signal, QUrl
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent, QColor, QTextCursor, QAction, QDesktopServices
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent, QColor, QTextCursor, QAction, QDesktopServices, QDragLeaveEvent, QCloseEvent
 from pathlib import Path
 from create_db import set_tables
 from worker import Worker
@@ -86,7 +86,7 @@ class FileDropLabel(QLabel):
         else:
             event.ignore()
 
-    def dragLeaveEvent(self, event) -> None:
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
         self.update_style(False)
 
     def dropEvent(self, event: QDropEvent) -> None:
@@ -124,7 +124,7 @@ class FileDropLabel(QLabel):
         if file_names:
             self.process_files(file_names)
 
-    def process_files(self, file_paths: list) -> None:
+    def process_files(self, file_paths: list[str]) -> None:
         """ドロップとクリックの共通処理（複数ファイル）"""
         count = len(file_paths)
         self.setText(f"\n{count}個のPDFファイルが追加されました\nさらに追加するにはドラッグ&ドロップ\n")
@@ -147,7 +147,7 @@ class FileDropLabel(QLabel):
 
 #データベース
 class DatabaseSelector(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.current_folder = str(Path.cwd()) # デフォルトはカレントディレクトリ
 
@@ -237,7 +237,7 @@ class DatabaseSelector(QWidget):
         # シグナル接続 (モード切替時の処理)
         self.btn_group.buttonToggled.connect(self.switch_ui)
 
-    def switch_ui(self, button, checked):
+    def switch_ui(self, button: QRadioButton, checked: bool) -> None:
         """ラジオボタンの変更に合わせてUIを出し分ける"""
         if not checked: return
         if button == self.radio_existing:
@@ -247,7 +247,7 @@ class DatabaseSelector(QWidget):
             self.existing_widget.setVisible(False)
             self.new_widget.setVisible(True)
 
-    def select_existing_file(self):
+    def select_existing_file(self) -> None:
         """既存ファイルの選択"""
         path, _ = QFileDialog.getOpenFileName(
             self, "データベースを選択", "", "SQLite DB (*.db *.sqlite);;All Files (*)"
@@ -255,7 +255,7 @@ class DatabaseSelector(QWidget):
         if path:
             self.path_input_existing.setText(path)
 
-    def select_folder(self):
+    def select_folder(self) -> None:
         """新規作成時の保存先フォルダ選択"""
         path: str = QFileDialog.getExistingDirectory(self, "保存先フォルダを選択", self.current_folder)
         if path:
@@ -620,7 +620,7 @@ class MainWindow(QMainWindow):
             text += "Men"
         return text
 
-    def update_file_paths(self, paths: list) -> None:
+    def update_file_paths(self, paths: list[str]) -> None:
         """
             ドロップエリアから複数パスを受け取り、テーブルに追加
         """
@@ -652,7 +652,7 @@ class MainWindow(QMainWindow):
         self.file_table.blockSignals(False)
         logger.info(f"{added}個のファイルを追加 (合計: {len(self.file_entries)}個)")
 
-    def on_table_cell_changed(self, row, column) -> None:
+    def on_table_cell_changed(self, row: int, column: int) -> None:
         """テーブルのEvent Name列が編集された時の処理"""
         if column == 1 and row < len(self.file_entries):
             new_name = self.file_table.item(row, 1).text().strip()
@@ -817,7 +817,7 @@ class MainWindow(QMainWindow):
         for btn in self.md_btn_group.buttons():
             btn.setEnabled(not locked)
     
-    def __set_radio_button(self, txt1, txt2, default=0) -> tuple[QHBoxLayout, QButtonGroup]:
+    def __set_radio_button(self, txt1: str, txt2: str, default: int = 0) -> tuple[QHBoxLayout, QButtonGroup]:
         mode_layout = QHBoxLayout()
         radio1 = QRadioButton(txt1)
         radio2 = QRadioButton(txt2)
@@ -838,7 +838,7 @@ class MainWindow(QMainWindow):
 
         return mode_layout, btn_group
     
-    def md_clicked(self, button_id) -> None:
+    def md_clicked(self, button_id: int) -> None:
         """
             ラジオボタンが切り替わった時に呼ばれる処理
         """
@@ -847,7 +847,7 @@ class MainWindow(QMainWindow):
         elif button_id == 1:
             self.is_md = True
 
-    def log_write(self, msg: str, color: QColor = None) -> None:
+    def log_write(self, msg: str, color: QColor | None = None) -> None:
         """ログビューアにメッセージを書き込む"""
         now = datetime.datetime.now().strftime("%H:%M:%S")
         
@@ -878,12 +878,12 @@ class MainWindow(QMainWindow):
         self.log_write(msg, color)
 
     # --- 以下、スレッドから呼ばれる関数 ---
-    def update_progress(self, val, msg) -> None:
+    def update_progress(self, val: int, msg: str) -> None:
         """進捗バーとその直下のラベルを更新（短い文言はログに出さず、logger 経由の詳細だけログに表示）"""
         self.progress_bar.setValue(val)
         self.progress_label.setText(msg)
 
-    def analysis_finished(self, msg) -> None:
+    def analysis_finished(self, msg: str) -> None:
         """完了時の処理"""
         self.set_ui_locked(False)
         self._current_processing_index = -1
@@ -895,7 +895,7 @@ class MainWindow(QMainWindow):
         self.file_table.setRowCount(0)
         self.drop_area.clear()
 
-    def analysis_error(self, err_msg) -> None:
+    def analysis_error(self, err_msg: str) -> None:
         """エラー時の処理"""
         self.set_ui_locked(False)
         self._current_processing_index = -1
@@ -920,7 +920,7 @@ class MainWindow(QMainWindow):
             self.progress_container.setMaximumHeight(0)
             self.progress_label.setText("")
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, event: QCloseEvent) -> None:
         """ウィンドウを閉じる前に解析中かどうか確認"""
         if self.worker and self.worker.isRunning():
             ret = QMessageBox.question(
