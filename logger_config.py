@@ -1,3 +1,8 @@
+"""
+logger_config.py: ログ設定モジュール
+アプリケーション全体のログ出力（コンソール出力、ファイル出力、
+GUIのログビューアへの転送）を管理・設定します。
+"""
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path

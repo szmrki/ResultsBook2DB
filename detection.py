@@ -1,3 +1,8 @@
+"""
+detection.py: ストーン検出・座標変換に関するコアアルゴリズムモジュール
+YOLOモデルを用いた推論を実行し、画像上の境界ボックス(bbox)を
+カーリングシートの物理的なDC座標（ハウス中心からの距離など）に変換します。
+"""
 from ultralytics import YOLO
 import numpy as np
 import cv2

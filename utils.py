@@ -1,3 +1,8 @@
+"""
+utils.py: 汎用ユーティリティモジュール
+スコア表からのハンマー権（後攻）の判定や、ディレクトリの削除、データ型の安全な変換など、
+アプリケーション全体で使われる雑多で便利な機能を提供します。
+"""
 import pandas as pd
 from typing import Any
 from pathlib import Path

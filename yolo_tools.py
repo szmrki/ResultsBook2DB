@@ -1,3 +1,7 @@
+"""
+yolo_tools.py: YOLO用のデータ管理・YAML作成処理を担うモジュール
+データセットをTrain/Valに分割したり、YOLO学習用のYAMLファイルを自動生成したりする機能を提供します。
+"""
 import os
 import shutil
 import random

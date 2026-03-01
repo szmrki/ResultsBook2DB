@@ -13,6 +13,13 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+"""
+main.py: アプリケーションのエントリーポイントおよびGUIモジュール
+PySide6を用いて構築されたユーザーインターフェースを提供します。
+PDFのドラッグ&ドロップ受け付け、データベース設定、
+解析進行状況の表示（ログ、プログレスバー）などを担い、
+実際の解析処理自体は `worker.py` に非同期で委譲します。
+"""
 import sys
 import datetime
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 

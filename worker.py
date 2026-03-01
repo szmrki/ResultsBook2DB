@@ -1,3 +1,10 @@
+"""
+worker.py: バックグラウンド実行・解析進行管理モジュール
+GUI画面がフリーズしないよう、QThreadを利用して非同期で以下の処理を統括します。
+1. PDFからのストーン画像・スコア表の抽出 (`pdf_tools`)
+2. YOLO推論による座標変換 (`detection`)
+3. ショット情報や大会情報との紐付けおよびDB保存 (`create_db`)
+"""
 import time
 import traceback
 from PySide6.QtCore import QThread, Signal

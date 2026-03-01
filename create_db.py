@@ -1,3 +1,8 @@
+"""
+create_db.py: データベース構築モジュール
+SQLite3を使用して、解析結果（ストーン座標、ショット情報、ゲーム結果など）を
+保存するための各種テーブルを初期化・作成します。
+"""
 import sqlite3
 import os
 import sys

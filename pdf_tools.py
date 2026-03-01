@@ -1,3 +1,7 @@
+"""
+pdf_tools.py: PDFの解析・画像抽出処理を担うモジュール
+PyMuPDFやpdfplumberを使用して、競技結果のスコア表やストーンの座標画像を抽出・整形します。
+"""
 import fitz  # PyMuPDF
 import pandas as pd
 import numpy as np
