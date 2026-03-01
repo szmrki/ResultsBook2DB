@@ -46,11 +46,9 @@ class Worker(QThread):
             self.visible_signal.emit(True)
             self.progress_signal.emit(0, "Loading...")
 
-            # セッション開始時に runs/detect ディレクトリをクリア
-            runs_dir = Path("runs/detect")
-            if runs_dir.exists():
-                logger.info(f"Cleaning up runs directory: {runs_dir}")
-                shutil.rmtree(runs_dir)
+            # セッション開始時に runs/detect 内の predict フォルダのみクリア（大会名フォルダは維持）
+            self._cleanup_predict_dirs()
+
             # 処理本体
             self.conn = sqlite3.connect(self.db_path)
             
@@ -95,6 +93,9 @@ class Worker(QThread):
             self._print_db_summary(after_stats)
 
             self.conn.close()
+
+            # predict フォルダのクリーンアップ
+            self._cleanup_predict_dirs()
             elapsed_all = time.time() - start_time_all
             logger.info(f"All processes completed in {elapsed_all:.2f}s")
             
@@ -118,6 +119,19 @@ class Worker(QThread):
 
         self.visible_signal.emit(False)
         self.progress_signal.emit(0, "")
+
+    def _cleanup_predict_dirs(self) -> None:
+        """runs/detect 内の predict フォルダを削除する"""
+        runs_dir = Path("runs/detect")
+        if not runs_dir.exists():
+            return
+        for d in runs_dir.iterdir():
+            if d.is_dir() and d.name.startswith("predict"):
+                try:
+                    shutil.rmtree(d)
+                    logger.debug(f"Removed predict directory: {d}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove {d}: {e}")
 
     def _get_db_stats(self) -> dict:
         """データベースの主要なテーブルのレコード数を取得する"""
@@ -231,7 +245,8 @@ class Worker(QThread):
                     iou=0.3,
                     conf=0.5,
                     save=True,
-                    exist_ok=False, # フォルダを自動でインクリメント(train, train2...)
+                    name=game,             # 保存先フォルダ名を大会名にする（runs/detect/{game}）
+                    exist_ok=False, # 同じ大会名が再度実行された場合は自動で連番(game2, game3...)を付与
                     workers=0,      # 動作安定のため、シングルスレッドによる実行
                     patience=5,     # Early Stoppingを5エポックに設定
                 )

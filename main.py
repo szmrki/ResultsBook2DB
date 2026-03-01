@@ -20,9 +20,9 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QFileDialog, QMessageBox, QFormLayout, QGroupBox, 
                              QRadioButton, QButtonGroup, QProgressBar,
                              QTableWidget, QTableWidgetItem, QHeaderView,
-                             QAbstractItemView, QPlainTextEdit, QSizePolicy, QScrollArea)
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent, QColor, QTextCursor, QAction
+                             QAbstractItemView, QPlainTextEdit, QSizePolicy, QScrollArea, QMenuBar, QMenu)
+from PySide6.QtCore import Qt, Signal, QUrl
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent, QColor, QTextCursor, QAction, QDesktopServices
 from pathlib import Path
 from create_db import set_tables
 from worker import Worker
@@ -426,9 +426,26 @@ class MainWindow(QMainWindow):
         menu_bar = self.menuBar()
         tool_menu = menu_bar.addMenu("ツール")
 
+        # GPUステータス確認
         gpu_action = QAction("GPUステータス確認", self)
         gpu_action.triggered.connect(self.show_gpu_status)
         tool_menu.addAction(gpu_action)
+
+        # 精度評価レポートを開く
+        report_action = QAction("精度評価レポート", self)
+        report_action.triggered.connect(self.open_latest_report)
+        tool_menu.addAction(report_action)
+
+    def open_latest_report(self) -> None:
+        """YOLOの学習結果フォルダ（runs/detect）をOSの機能で開く"""
+        runs_dir = Path("runs/detect")
+        
+        if not runs_dir.exists():
+            QMessageBox.information(self, "エラー", "フォルダが見つかりません")
+            return
+
+        # runs/detect フォルダをOS標準のファイルマネージャーで開く
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(runs_dir.absolute())))
 
     def show_gpu_status(self) -> None:
         """GPUの使用可否を確認してダイアログで表示する"""
