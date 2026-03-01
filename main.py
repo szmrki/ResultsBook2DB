@@ -20,9 +20,10 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QFileDialog, QMessageBox, QFormLayout, QGroupBox, 
                              QRadioButton, QButtonGroup, QProgressBar,
                              QTableWidget, QTableWidgetItem, QHeaderView,
-                             QAbstractItemView, QPlainTextEdit, QSizePolicy, QScrollArea)
+                             QAbstractItemView, QPlainTextEdit, QSizePolicy, QScrollArea,
+                             QMenuBar)
 from PySide6.QtCore import Qt, Signal, QTimer, QSize
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent, QFont, QColor, QTextCursor, QCursor
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent, QFont, QColor, QTextCursor, QCursor, QAction
 from pathlib import Path
 from create_db import set_tables
 from worker import Worker
@@ -300,7 +301,8 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(700, 600)
         self.setup_styles()
 
-        self.setup_styles()
+        # --- メニューバーの設定 ---
+        self.setup_menu_bar()
 
         # --- Scroll Area Setup ---
         self.scroll_area = QScrollArea()
@@ -419,11 +421,74 @@ class MainWindow(QMainWindow):
         self.worker = None
         self._current_processing_index = -1  # 現在処理中のファイルインデックス（-1=未処理）
 
+    def setup_menu_bar(self) -> None:
+        """メニューバーを構築する"""
+        menu_bar = self.menuBar()
+        tool_menu = menu_bar.addMenu("ツール")
+
+        gpu_action = QAction("GPUステータス確認", self)
+        gpu_action.triggered.connect(self.show_gpu_status)
+        tool_menu.addAction(gpu_action)
+
+    def show_gpu_status(self) -> None:
+        """GPUの使用可否を確認してダイアログで表示する"""
+        import torch
+
+        if torch.cuda.is_available():
+            device_name = torch.cuda.get_device_name(0)
+            msg = (f"CUDA (NVIDIA GPU) が利用可能です。\n"
+                   f"デバイス: {device_name}")
+            icon = QMessageBox.Icon.Information
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            msg = ("MPS (Apple Silicon) が利用可能です。")
+            icon = QMessageBox.Icon.Information
+        else:
+            msg = ("GPUが検出されませんでした。\n\n"
+                   "CPUのみで処理を行うため、\n"
+                   "ファインチューニングや推論に時間がかかる場合があります。")
+            icon = QMessageBox.Icon.Warning
+
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("GPUステータス")
+        dialog.setText(msg)
+        dialog.setIcon(icon)
+        dialog.exec()
+
     def setup_styles(self):
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #f8f9fa;
                 color: #333333;
+            }
+            QMenuBar {
+                background-color: transparent;
+                padding: 1px;
+                font-size: 13px;
+            }
+            QMenuBar::item {
+                padding: 4px 10px;
+                background: transparent;
+                margin-top: 2px;
+                margin-bottom: 2px;
+            }
+            QMenuBar::item:selected {
+                background: #e9ecef;
+                border-radius: 4px;
+            }
+            QMenu {
+                background-color: white;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                font-size: 13px;
+                padding: 2px;
+            }
+            QMenu::item {
+                padding: 6px 24px 6px 24px;
+            }
+            QMenu::item:selected {
+                background-color: #0078D7;
+                color: white;
+                border-radius: 4px;
             }
             QGroupBox {
                 font-size: 14px;
