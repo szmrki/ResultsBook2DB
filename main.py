@@ -20,10 +20,9 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QFileDialog, QMessageBox, QFormLayout, QGroupBox, 
                              QRadioButton, QButtonGroup, QProgressBar,
                              QTableWidget, QTableWidgetItem, QHeaderView,
-                             QAbstractItemView, QPlainTextEdit, QSizePolicy, QScrollArea,
-                             QMenuBar)
-from PySide6.QtCore import Qt, Signal, QTimer, QSize
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent, QFont, QColor, QTextCursor, QCursor, QAction
+                             QAbstractItemView, QPlainTextEdit, QSizePolicy, QScrollArea)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent, QColor, QTextCursor, QAction
 from pathlib import Path
 from create_db import set_tables
 from worker import Worker
@@ -315,7 +314,8 @@ class MainWindow(QMainWindow):
 
         main_layout = QVBoxLayout(self.scroll_content)
         main_layout.setSpacing(15)
-        main_layout.setContentsMargins(20, 20, 20, 20)
+        # 上部の余白(20->1)を狭くして、メニューバーとの間隔を詰める
+        main_layout.setContentsMargins(20, 1, 20, 20)
 
         # log_viewer を先に作成（add_qt_handler 内の logging で log_write が呼ばれるため）
         self.log_viewer = QPlainTextEdit()

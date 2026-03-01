@@ -51,7 +51,6 @@ class Worker(QThread):
             if runs_dir.exists():
                 logger.info(f"Cleaning up runs directory: {runs_dir}")
                 shutil.rmtree(runs_dir)
-            
             # 処理本体
             self.conn = sqlite3.connect(self.db_path)
             
@@ -91,6 +90,9 @@ class Worker(QThread):
                 self.visible_signal.emit(False)
                 self.progress_signal.emit(0, "")
                 return
+            # 処理完了後のDBのレコード数を取得し、結果をログに出力
+            after_stats = self._get_db_stats()
+            self._print_db_summary(after_stats)
 
             self.conn.close()
             elapsed_all = time.time() - start_time_all
@@ -116,6 +118,32 @@ class Worker(QThread):
 
         self.visible_signal.emit(False)
         self.progress_signal.emit(0, "")
+
+    def _get_db_stats(self) -> dict:
+        """データベースの主要なテーブルのレコード数を取得する"""
+        stats = {"events": 0, "games": 0, "ends": 0, "shots": 0, "stones": 0}
+        try:
+            cur = self.conn.cursor()
+            for key in stats.keys():
+                cur.execute(f"SELECT COUNT(*) FROM {key}")
+                stats[key] = cur.fetchone()[0]
+        except Exception as e:
+            logger.error(f"Failed to get DB stats: {e}")
+        return stats
+
+    def _print_db_summary(self, stats: dict) -> None:
+        """データベースの現在の総件数をログに出力する"""
+        summary_msg = (
+            "\n=========================================\n"
+            "【現在のデータベース統計情報】\n"
+            f" ・ 登録大会数:   {stats['events']:,} 大会\n"
+            f" ・ 総試合数:     {stats['games']:,} 試合\n"
+            f" ・ 総エンド数:   {stats['ends']:,} エンド\n"
+            f" ・ 総ショット数: {stats['shots']:,} ショット\n"
+            f" ・ 総ストーン数: {stats['stones']:,} 件\n"
+            "========================================="
+        )
+        logger.info(summary_msg)
 
     def executemodel(self, pdf_path: str, tournament_name: str, prefix: str = "") -> bool:
         """
