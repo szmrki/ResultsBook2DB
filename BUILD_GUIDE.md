@@ -5,6 +5,7 @@
 ## 共通の前提条件
 
 - Python 3.12 がインストールされていること
+- パッケージマネージャー `uv` がインストールされていること
 - ソースコードを以下のコマンドでクローンしていること
   ```bash
   git clone https://github.com/szmrki/ResultsBook2DB.git
