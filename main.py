@@ -135,15 +135,7 @@ class FileDropLabel(QLabel):
         """ドロップとクリックの共通処理（複数ファイル）"""
         count = len(file_paths)
         self.setText(f"\n{count}個のPDFファイルが追加されました\nさらに追加するにはドラッグ&ドロップ\n")
-        self.setStyleSheet("""
-            QLabel {
-                border: 2px dashed #0078D7;
-                border-radius: 10px;
-                background-color: #eaf4ff;
-                font-size: 14px;
-                color: black;
-            }
-        """)
+        self.update_style(False) # 状態を通常に戻す
         # メインウィンドウに通知
         self.filesDropped.emit(file_paths)
     
