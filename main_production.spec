@@ -9,10 +9,14 @@ excluded_modules = [
 ]
 
 a = Analysis(
-    ['main.py', 'worker.py', 'create_db.py', 'tools.py', 'detection.py'],
+    ['main.py', 'worker.py', 'create_db.py', 'detection.py', 
+    'pdf_tools.py', 'yolo_tools.py', 'utils.py', 'logger_config.py'],
     pathex=[],
     binaries=[],
-    datas=[('complete_model/base.pt', 'complete_model')],
+    datas=[
+        ('complete_model/base.pt', 'complete_model'),
+        ('icon/app_icon.png', 'icon') # アプリ内アイコン画像を同梱
+    ],
     hiddenimports=['torch', 'torchvision', 'torchaudio', 'ultralytics'],
     hookspath=[],
     hooksconfig={},
@@ -29,6 +33,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='RB2DB',
+    icon='icon/app_icon.ico', # Windows等向け実行ファイルアイコン
     debug=True,
     bootloader_ignore_signals=False,
     strip=False,
@@ -55,6 +60,6 @@ if sys.platform == 'darwin':
     app = BUNDLE(
         coll,
         name='ResultsBook2DB.app',
-        icon=None,
+        icon='icon/app_icon.png', # macOS等向けappパッケージアイコン
         bundle_identifier=None,
     )

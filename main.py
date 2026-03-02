@@ -27,9 +27,10 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QFileDialog, QMessageBox, QFormLayout, QGroupBox, 
                              QRadioButton, QButtonGroup, QProgressBar,
                              QTableWidget, QTableWidgetItem, QHeaderView,
-                             QAbstractItemView, QPlainTextEdit, QSizePolicy, QScrollArea, QMenuBar, QMenu)
+                             QAbstractItemView, QPlainTextEdit, QSizePolicy, QScrollArea)
 from PySide6.QtCore import Qt, Signal, QUrl
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QMouseEvent, QColor, QTextCursor, QAction, QDesktopServices, QDragLeaveEvent, QCloseEvent
+from PySide6.QtGui import (QDragEnterEvent, QDropEvent, QMouseEvent, QColor, QTextCursor, 
+                            QAction, QDesktopServices, QDragLeaveEvent, QCloseEvent, QIcon)
 from pathlib import Path
 from create_db import set_tables
 from worker import Worker
@@ -290,12 +291,27 @@ class DatabaseSelector(QWidget):
 # ---------------------------------------------------------
 # メインウィンドウ
 # ---------------------------------------------------------
+def resource_path(relative_path: str) -> Path:
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = Path(__file__).parent
+
+    return Path(base_path) / relative_path
+
 class MainWindow(QMainWindow):
     log_signal = Signal(str, int) # メッセージ, ログレベル
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("ResultsBook2DB")
+        
+        # アイコンを iconフォルダのファイルから読み込む (PyInstaller対応)
+        icon_path = resource_path("icon/app_icon.png")
+        self.setWindowIcon(QIcon(str(icon_path))) 
+        
         self.setMinimumSize(700, 600)
         self.setup_styles()
 
