@@ -1,0 +1,16 @@
+[project]
+name = "rb2db"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.4.2",
+    "opencv-python>=4.13.0.92",
+    "pandas>=3.0.1",
+    "pdfplumber>=0.11.9",
+    "pyinstaller>=6.19.0",
+    "pymupdf>=1.27.1",
+    "pyside6==6.7.3",
+    "ultralytics>=8.4.19",
+]

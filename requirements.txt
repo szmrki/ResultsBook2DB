@@ -1,8 +1,0 @@
-numpy
-pyside6
-ultralytics
-pandas
-PyMuPDF
-opencv-python
-pdfplumber
-pyinstaller
