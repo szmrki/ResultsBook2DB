@@ -9,7 +9,6 @@ yaml/
 complete_model/*
 runs/
 inference.py
-*.png
 *.zip
 *.pt
 build/
