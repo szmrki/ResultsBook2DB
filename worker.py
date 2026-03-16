@@ -12,6 +12,7 @@ import sqlite3
 from pdf_tools import *
 from yolo_tools import *
 from utils import *
+from detection import *
 import sys
 from itertools import zip_longest
 import io
