@@ -22,6 +22,15 @@ class UpdateChecker(QThread):
         
     def run(self):
         try:
+            # === テスト用ダミー通知（UI表示の動作確認用） ===
+            # 通知UIのテストを行いたい場合は、以下の値を True に変更してください
+            TEST_MODE = False
+            if TEST_MODE:
+                from time import sleep
+                sleep(1)
+                self.update_available.emit("v0.3.0", self.releases_url)
+                return
+
             # GitHub APIを叩く (User-Agentが必須)
             req = urllib.request.Request(
                 self.api_url,

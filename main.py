@@ -37,6 +37,7 @@ from worker import Worker
 import multiprocessing
 import logging
 import tomllib
+import webbrowser
 from pathlib import Path
 from logger_config import setup_logging, add_qt_handler
 from update_checker import UpdateChecker
@@ -513,35 +514,18 @@ class MainWindow(QMainWindow):
 
     def show_update_notification(self, new_version: str, releases_url: str) -> None:
         """新しいバージョンがある場合にステータスバーに通知を表示する"""
-        msg = f"新しいバージョン ({new_version}) が利用可能です。"
-        self.statusBar().showMessage(msg)
+        self.statusBar().clearMessage()
         
-        # クリックできるようにスタイルとイベントを追加
-        self.statusBar().setStyleSheet("QStatusBar { color: #0078D7; font-weight: bold; }")
+        btn = QPushButton(f"新しいバージョン ({new_version}) が利用可能です。クリックしてアップデート手順を確認")
+        btn.setStyleSheet("color: #0078D7; font-weight: bold; border: none; background: transparent; padding: 0;")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
         
-        # 簡易的にマウスプレスイベントをオーバーライドしてダイアログを表示
-        def on_status_bar_clicked(event):
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle("アップデートの案内")
-            msg_box.setText(f"新しいバージョン ({new_version}) がリリースされています。\n\n"
-                            f"ソースコードを更新して再ビルドすることでアップデートを適用できます。")
-            msg_box.setIcon(QMessageBox.Icon.Information)
-            
-            # カスタムボタンの追加
-            btn_guide = msg_box.addButton("アップデート手順を見る", QMessageBox.ButtonRole.ActionRole)
-            btn_release = msg_box.addButton("リリースノート", QMessageBox.ButtonRole.ActionRole)
-            btn_cancel = msg_box.addButton("閉じる", QMessageBox.ButtonRole.RejectRole)
-            
-            msg_box.exec()
-            
-            if msg_box.clickedButton() == btn_guide:
-                guide_url = "https://github.com/szmrki/ResultsBook2DB/blob/main/BUILD_GUIDE.md#アップデート時の手順"
-                QDesktopServices.openUrl(QUrl(guide_url))
-            elif msg_box.clickedButton() == btn_release:
-                QDesktopServices.openUrl(QUrl(releases_url))
-        
-        self.statusBar().setCursor(Qt.CursorShape.PointingHandCursor)
-        self.statusBar().mousePressEvent = on_status_bar_clicked
+        def open_guide():
+            guide_url = "https://github.com/szmrki/ResultsBook2DB/blob/main/BUILD_GUIDE.md#アップデート時の手順"
+            webbrowser.open(guide_url)
+                
+        btn.clicked.connect(open_guide)
+        self.statusBar().addWidget(btn)
 
     def setup_styles(self):
         self.setStyleSheet("""
