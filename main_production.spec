@@ -15,7 +15,8 @@ a = Analysis(
     binaries=[],
     datas=[
         ('complete_model/base.pt', 'complete_model'),
-        ('icon/app_icon.png', 'icon') # アプリ内アイコン画像を同梱
+        ('icon/app_icon.png', 'icon'), # アプリ内アイコン画像を同梱
+        ('pyproject.toml', '.') # バージョン情報取得用
     ],
     hiddenimports=['torch', 'torchvision', 'torchaudio', 'ultralytics'],
     hookspath=[],

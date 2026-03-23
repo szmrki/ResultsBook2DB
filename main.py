@@ -36,7 +36,31 @@ from create_db import set_tables
 from worker import Worker
 import multiprocessing
 import logging
+import tomllib
+from pathlib import Path
 from logger_config import setup_logging, add_qt_handler
+from update_checker import UpdateChecker
+
+def resource_path(relative_path: str) -> Path:
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = Path(__file__).parent
+
+    return Path(base_path) / relative_path
+
+def get_app_version() -> str:
+    try:
+        toml_path = resource_path("pyproject.toml")
+        with open(toml_path, "rb") as f:
+            data = tomllib.load(f)
+            return data.get("project", {}).get("version", "0.0.0")
+    except Exception as e:
+        return "0.0.0"
+
+__version__ = get_app_version()
 
 # ロギングの初期化（戻り値の log_file_path を add_qt_handler に渡す用に保持）
 LOG_FILE_PATH = setup_logging()
@@ -291,15 +315,6 @@ class DatabaseSelector(QWidget):
 # ---------------------------------------------------------
 # メインウィンドウ
 # ---------------------------------------------------------
-def resource_path(relative_path: str) -> Path:
-    """ Get absolute path to resource, works for dev and for PyInstaller """
-    try:
-        # PyInstaller creates a temp folder and stores path in _MEIPASS
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = Path(__file__).parent
-
-    return Path(base_path) / relative_path
 
 class MainWindow(QMainWindow):
     log_signal = Signal(str, int) # メッセージ, ログレベル
@@ -314,6 +329,16 @@ class MainWindow(QMainWindow):
         
         self.setMinimumSize(700, 600)
         self.setup_styles()
+
+        # --- ステータスバーとアップデート通知の設定 ---
+        self.update_checker = UpdateChecker(
+            current_version=__version__,
+            repo_owner="szmrki",
+            repo_name="ResultsBook2DB",
+            parent=self
+        )
+        self.update_checker.update_available.connect(self.show_update_notification)
+        self.update_checker.start()
 
         # --- メニューバーの設定 ---
         self.setup_menu_bar()
@@ -485,6 +510,38 @@ class MainWindow(QMainWindow):
         dialog.setText(msg)
         dialog.setIcon(icon)
         dialog.exec()
+
+    def show_update_notification(self, new_version: str, releases_url: str) -> None:
+        """新しいバージョンがある場合にステータスバーに通知を表示する"""
+        msg = f"新しいバージョン ({new_version}) が利用可能です。"
+        self.statusBar().showMessage(msg)
+        
+        # クリックできるようにスタイルとイベントを追加
+        self.statusBar().setStyleSheet("QStatusBar { color: #0078D7; font-weight: bold; }")
+        
+        # 簡易的にマウスプレスイベントをオーバーライドしてダイアログを表示
+        def on_status_bar_clicked(event):
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("アップデートの案内")
+            msg_box.setText(f"新しいバージョン ({new_version}) がリリースされています。\n\n"
+                            f"ソースコードを更新して再ビルドすることでアップデートを適用できます。")
+            msg_box.setIcon(QMessageBox.Icon.Information)
+            
+            # カスタムボタンの追加
+            btn_guide = msg_box.addButton("アップデート手順を見る", QMessageBox.ButtonRole.ActionRole)
+            btn_release = msg_box.addButton("リリースノート", QMessageBox.ButtonRole.ActionRole)
+            btn_cancel = msg_box.addButton("閉じる", QMessageBox.ButtonRole.RejectRole)
+            
+            msg_box.exec()
+            
+            if msg_box.clickedButton() == btn_guide:
+                guide_url = "https://github.com/szmrki/ResultsBook2DB/blob/main/BUILD_GUIDE.md#アップデート時の手順"
+                QDesktopServices.openUrl(QUrl(guide_url))
+            elif msg_box.clickedButton() == btn_release:
+                QDesktopServices.openUrl(QUrl(releases_url))
+        
+        self.statusBar().setCursor(Qt.CursorShape.PointingHandCursor)
+        self.statusBar().mousePressEvent = on_status_bar_clicked
 
     def setup_styles(self):
         self.setStyleSheet("""
