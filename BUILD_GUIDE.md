@@ -12,6 +12,41 @@
   cd ResultsBook2DB
   ```
 
+## PyTorch と GPU について
+
+本プロジェクトでは `pyproject.toml` の `[tool.uv.sources]` 設定により、Windows / Linux 環境では **CUDA 12.8 対応の GPU 版 PyTorch** が `uv sync` 時に自動的にインストールされます。macOS では CPU 版が自動的にインストールされます。
+
+### 動作要件
+
+| OS | インストールされる PyTorch | GPU サポート | 備考 |
+|----|------------------------|-------------|------|
+| Windows / Linux | CUDA 12.8 版 | NVIDIA GPU (ドライバ **570.x 以上**) | `[tool.uv.sources]` で自動設定 |
+| macOS (Apple Silicon) | デフォルト版 (MPS 対応) | Apple GPU (M1/M2/M3/M4) | PyPI 標準ホイールに MPS が内蔵 |
+
+> **注意**: GPU を搭載していない環境でも、CUDA 版 PyTorch は CPU フォールバックで動作するため、ビルド・実行ともに問題ありません（推論速度は低下します）。
+
+### NVIDIA ドライバのバージョン確認方法
+
+```bash
+nvidia-smi --query-gpu=driver_version --format=csv,noheader
+```
+
+ドライバが 570.x 未満の場合は、[NVIDIA ドライバダウンロードページ](https://www.nvidia.com/drivers) から最新版に更新してください。
+
+### 異なる CUDA バージョンを使用する場合
+
+古い GPU やドライバの制約で CUDA 12.8 が利用できない場合は、`pyproject.toml` 内のインデックス URL を変更してください：
+
+```toml
+# 例: CUDA 12.4 を使用する場合
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu124"  # cu128 → cu124 に変更
+explicit = true
+```
+
+変更後、`uv sync` を再実行してください。
+
 ## 1. Windows でのビルド
 
 Windows では、`.exe` ファイルを作成できます。
@@ -24,15 +59,7 @@ Windows では、`.exe` ファイルを作成できます。
     uv sync
     ```
 
-2.  **PyTorch (GPU版) のインストール (推奨)**
-    CUDA対応のGPUを使用する場合、PyTorch 公式サイトから適切なバージョンで上書きインストールしてください。
-    例 (CUDA 11.8の場合):
-    ```powershell
-    uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-    ```
-    ※ CPUのみの場合はこのステップをスキップしても構いませんが、動作が遅くなる可能性があります。
-
-3.  **PyInstaller によるビルド**
+2.  **PyInstaller によるビルド**
     ```powershell
     uv run pyinstaller main_production.spec
     ```
@@ -67,21 +94,14 @@ Ubuntu 等の Linux 環境向けの手順です。
     uv sync
     ```
 
-2.  **PyTorch (GPU版) のインストール (推奨)**
-    GPUを使用する場合、事前にインストールしてください。
-    例 (CUDA 11.8):
-    ```bash
-    uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-    ```
-
-3.  **PyInstaller によるビルド**
+2.  **PyInstaller によるビルド**
     ```bash
     uv run pyinstaller main_production.spec
     ```
     完了すると `dist/ResultsBook2DB` フォルダが生成されます。
     - **本体ファイル**: `dist/ResultsBook2DB/RB2DB`
 
-5.  **実行**
+3.  **実行**
     ```bash
     ./dist/ResultsBook2DB/RB2DB
     ```
