@@ -105,3 +105,16 @@ Ubuntu 等の Linux 環境向けの手順です。
     ```bash
     ./dist/ResultsBook2DB/RB2DB
     ```
+
+## アップデート時の手順
+
+ソースコードや依存関係に更新があった場合は、以下の手順で再ビルドしてください。
+
+```bash
+git pull
+uv sync
+uv run pyinstaller main_production.spec -y
+```
+
+`uv sync` は `uv.lock` に基づいて差分のみを更新するため、毎回フルインストールにはなりません。
+
