@@ -1,0 +1,41 @@
+name: Auto Release on Version Bump
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'pyproject.toml'
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Extract version
+        id: extract_version
+        run: |
+          # pyproject.toml から version = "0.X.Y" の値を抽出
+          VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' pyproject.toml)
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME=${{ steps.extract_version.outputs.tag }}
+          
+          # タグが既に存在するかチェック
+          if ! git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME"; then
+            echo "Creating new release: $TAG_NAME"
+            gh release create "$TAG_NAME" \
+              --title "Release $TAG_NAME" \
+              --generate-notes
+          else
+            echo "Release $TAG_NAME already exists. Skipping."
+          fi
