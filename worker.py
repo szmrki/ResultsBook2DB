@@ -260,7 +260,7 @@ class Worker(QThread):
                     name=game,             # 保存先フォルダ名を大会名にする（runs/detect/{game}）
                     exist_ok=False, # 同じ大会名が再度実行された場合は自動で連番(game2, game3...)を付与
                     workers=0,      # 動作安定のため、シングルスレッドによる実行
-                    patience=5,     # Early Stoppingを5エポックに設定
+                    patience=10,     # Early Stoppingを10エポックに設定
                 )
                 # 学習結果の要約をログに記録
                 final_epoch = model.trainer.epoch + 1
