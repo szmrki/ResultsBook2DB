@@ -125,11 +125,38 @@ def extract_game_result(page: pdfplumber.page.Page, is_md: bool = False) -> pd.D
                 power_play_ends.extend([int(n) for n in nums])
 
     tabs = page.find_tables()
-    # 得点表のテーブルを取得
-    for table in tabs:
-        table = table.extract()
-        if any('*' in row for row in table):
+    # 得点表のテーブルを取得（'*' を含むテーブルを優先）
+    table = None
+    for t in tabs:
+        extracted = t.extract()
+        if any('*' in row for row in extracted):
+            table = extracted
             break
+
+    # フォールバック: '*' が検出されなかった場合
+    # （pdfplumberがLSFE列を認識できないPDFでは、得点表から '*' 列ごと欠落する）
+    if table is None:
+        for t in tabs:
+            extracted = t.extract()
+            if len(extracted) == 2 and len(extracted[0]) >= 10 and all(
+                (cell or '').strip() in ('', 'X', '*') or (cell or '').strip().lstrip('-').isdigit()
+                for row in extracted for cell in row
+            ):
+                table = extracted
+                break
+        if table is not None:
+            # テキストからLSFE情報を補完して先頭列に追加
+            lsfe_red, lsfe_yellow = __extract_lsfe_from_text(text, team_red, team_yellow)
+            table[0].insert(0, lsfe_red)
+            table[1].insert(0, lsfe_yellow)
+            logger.info(f"LSFE column reconstructed from text: red='{lsfe_red}', yellow='{lsfe_yellow}'")
+
+    if table is None:
+        logger.warning("Score table not found on Game Results page.")
+        df = pd.DataFrame()
+        if is_md:
+            return df, power_play_ends
+        return df
 
     n_cols = len(table[0])
     columns = ["LSFE"] + [str(i) for i in range(1, n_cols-1)] + ["Total"]
@@ -144,6 +171,33 @@ def extract_game_result(page: pdfplumber.page.Page, is_md: bool = False) -> pd.D
     if is_md:
         return df, power_play_ends
     return df
+
+def __extract_lsfe_from_text(text: str, team_red: str | None, team_yellow: str | None) -> tuple[str, str]:
+    """
+        ページテキストから各チームのLSFE値('*' または '')を取得する
+        Args:
+            text : ページのテキスト
+            team_red : 赤チーム名 (例: 'CAN - Canada')
+            team_yellow : 黄チーム名
+        Returns:
+            tuple[str, str] : (赤のLSFE値, 黄のLSFE値)
+    """
+    def find_lsfe(team: str | None) -> str:
+        if not team:
+            return ''
+        for line in text.split('\n'):
+            if team in line:
+                after = line.split(team, 1)[1]
+                # team名が途中で切れている場合（例: "USA - United" と抽出され、本来は
+                # "USA - United States of America"）に備え、スコア開始位置まで読み進める
+                for tok in after.split():
+                    if tok == '*':
+                        return '*'
+                    if tok == 'X' or tok.lstrip('-').isdigit():
+                        return ''
+                return ''
+        return ''
+    return find_lsfe(team_red), find_lsfe(team_yellow)
 
 def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
     """
