@@ -64,6 +64,14 @@ class Worker(QThread):
             # 処理本体
             self.conn = sqlite3.connect(self.db_path)
             
+            cur_init = self.conn.cursor()
+            cur_init.execute('''CREATE TABLE IF NOT EXISTS lsds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL, 
+                team STRING, player_name STRING, distance_cm FLOAT,
+                FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
+            )
+            self.conn.commit()
+            
             start_time_all = time.time()
             errors = []
             
@@ -350,6 +358,19 @@ class Worker(QThread):
                                     final_score_red, final_score_yellow) VALUES (?, ?, ?, ?, ?, ?)""", 
                                     (event_id, page_num, team_red, team_yellow, fin_red, fin_yellow))
                     game_id = cur.lastrowid #game_idを取得
+
+                    # --- LSDデータを抽出・保存 ---
+                    plumber_text = page_plumber.extract_text()
+                    if plumber_text:
+                        lsd_results = extract_lsd_from_text(plumber_text)
+                        for lsd in lsd_results:
+                            if lsd["player_red"] and lsd["lsd_red"] is not None:
+                                cur.execute("INSERT INTO lsds (game_id, team, player_name, distance_cm) VALUES (?, ?, ?, ?)",
+                                            (game_id, team_red, lsd["player_red"], lsd["lsd_red"]))
+                            if lsd["player_yellow"] and lsd["lsd_yellow"] is not None:
+                                cur.execute("INSERT INTO lsds (game_id, team, player_name, distance_cm) VALUES (?, ?, ?, ?)",
+                                            (game_id, team_yellow, lsd["player_yellow"], lsd["lsd_yellow"]))
+                    # ---------------------------
 
                     # ここでエンドテーブルに情報を一括挿入
                     ends_data = []

@@ -437,3 +437,53 @@ def __black_more_than_white(image_array: np.ndarray) -> bool:
         return False
     else:
         return True
+
+def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
+    """
+    Game ResultsページのテキストからLSD情報を抽出する
+    """
+    results = []
+    # 数値+cm を抽出する正規表現
+    lsd_value_pattern = re.compile(r'(\d+\.?\d*)\s*cm')
+
+    lines = text.split('\n')
+    lsd_section = False
+    lsd_lines = []
+    for line in lines:
+        if "Last Stone Draw Distance" in line:
+            lsd_section = True
+            continue
+        if lsd_section:
+            if line.strip().startswith("Total"):
+                lsd_section = False
+                continue
+            if "cm" in line:
+                lsd_lines.append(line)
+            else:
+                lsd_section = False
+
+    for line in lsd_lines:
+        matches = list(lsd_value_pattern.finditer(line))
+        if len(matches) >= 2:
+            player_red = line[:matches[0].start()].strip()
+            lsd_red = float(matches[0].group(1))
+            player_yellow = line[matches[0].end():matches[1].start()].strip()
+            lsd_yellow = float(matches[1].group(1))
+
+            results.append({
+                "player_red": player_red,
+                "player_yellow": player_yellow,
+                "lsd_red": lsd_red,
+                "lsd_yellow": lsd_yellow,
+            })
+        elif len(matches) == 1:
+            player_red = line[:matches[0].start()].strip()
+            lsd_red = float(matches[0].group(1))
+            results.append({
+                "player_red": player_red,
+                "player_yellow": None,
+                "lsd_red": lsd_red,
+                "lsd_yellow": None,
+            })
+
+    return results
