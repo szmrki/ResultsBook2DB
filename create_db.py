@@ -43,6 +43,11 @@ def set_tables(dbname: str | Path, is_md: bool = False) -> None:
         x FLOAT, y FLOAT, distance_from_center FLOAT, inhouse INTEGER, insheet INTEGER,
         FOREIGN KEY(shot_id) REFERENCES shots(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
     )
+    cur.execute(
+        '''CREATE TABLE lsds (id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL, 
+        team STRING, player_name STRING, distance_cm FLOAT,
+        FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
+    )
     conn.commit()
     conn.close()
 
