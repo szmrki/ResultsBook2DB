@@ -67,6 +67,16 @@ SQLite データベース (`.db`) は以下のテーブルで構成されてい�
 | `final_score_red` | 赤ストーンチームの最終スコア |
 | `final_score_yellow` | 黄ストーンチームの最終スコア |
 
+### `lsds` (LSD情報)
+
+| カラム名 | 説明 |
+| :--- | :--- |
+| `id` | LSD ID (主キー) |
+| `game_id` | 試合ID (外部キー: `games.id`) |
+| `team` | チーム名 |
+| `player_name` | 選手名 |
+| `distance_cm` | LSD計測値 (cm) |
+
 ### `ends` (エンド情報)
 
 | カラム名 | 説明 |
