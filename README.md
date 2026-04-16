@@ -10,7 +10,7 @@
 
 ## 処理フロー (System Flow)
 
-![システムの処理フロー](docs/flowchart.png)
+<img src="docs/flowchart.png" width="400" alt="処理フロー図">
 
 ## 必要要件
 
