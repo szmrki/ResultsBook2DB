@@ -24,5 +24,6 @@ setup.iss
 logs/
 create_slides.py
 slides/
-docs/
+docs/*
+!docs/flowchart.png
 scratch/

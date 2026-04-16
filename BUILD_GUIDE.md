@@ -7,6 +7,7 @@
 - Python 3.12 がインストールされていること
 - パッケージマネージャー `uv` がインストールされていること
 - ソースコードを以下のコマンドでクローンしていること
+
   ```bash
   git clone https://github.com/szmrki/ResultsBook2DB.git
   cd ResultsBook2DB
@@ -53,16 +54,19 @@ Windows では、`.exe` ファイルを作成できます。
 
 ### 手順
 
-1.  **プロジェクトの同期と仮想環境の構築**
+1. **プロジェクトの同期と仮想環境の構築**
     uv を用いて依存関係を一括でインストールします。実行すると自動的に `.venv` などの仮想環境が作成・同期されます。
+
     ```powershell
     uv sync
     ```
 
-2.  **PyInstaller によるビルド**
+2. **PyInstaller によるビルド**
+
     ```powershell
     uv run pyinstaller main_production.spec
     ```
+
     ビルドが完了すると、`dist\ResultsBook2DB` フォルダが生成されます。中の `RB2DB.exe` を実行して動作確認してください。  
     適宜ショートカットを作成してください。
 
@@ -72,15 +76,18 @@ macOS では、`.app` アプリケーションバンドルを作成できます�
 
 ### 手順
 
-1.  **プロジェクトの同期と仮想環境の構築**
+1. **プロジェクトの同期と仮想環境の構築**
+
     ```bash
     uv sync
     ```
-    
-2.  **PyInstaller によるビルド**
+
+2. **PyInstaller によるビルド**
+
     ```bash
     uv run pyinstaller main_production.spec
     ```
+
     完了すると `dist` フォルダ内に `ResultsBook2DB.app` が生成されます。
 
 ## 3. Linux でのビルド
@@ -89,19 +96,23 @@ Ubuntu 等の Linux 環境向けの手順です。
 
 ### 手順
 
-1.  **プロジェクトの同期と仮想環境の構築**
+1. **プロジェクトの同期と仮想環境の構築**
+
     ```bash
     uv sync
     ```
 
-2.  **PyInstaller によるビルド**
+2. **PyInstaller によるビルド**
+
     ```bash
     uv run pyinstaller main_production.spec
     ```
+
     完了すると `dist/ResultsBook2DB` フォルダが生成されます。
     - **本体ファイル**: `dist/ResultsBook2DB/RB2DB`
 
-3.  **実行**
+3. **実行**
+
     ```bash
     ./dist/ResultsBook2DB/RB2DB
     ```
@@ -111,6 +122,7 @@ Ubuntu 等の Linux 環境向けの手順です。
 ソースコードや依存関係に更新があった場合は、以下の手順で再ビルドしてください。
 
 ### ローカルデータのバックアップ
+
 再ビルド時、出力先の `dist/` フォルダは完全に削除されるため、学習済みの重みや解析結果を引き継ぎたい場合は、ビルド前に以下のフォルダを別の場所へ退避させ、ビルド完了後に元の場所へ戻してください。
 
 - **`dist/ResultsBook2DB/_internal/complete_model/`** （独自の学習モデル）
@@ -124,6 +136,3 @@ git pull
 uv sync
 uv run pyinstaller main_production.spec -y
 ```
-
-`uv sync` は `uv.lock` に基づいて差分のみを更新するため、毎回フルインストールにはなりません。
-

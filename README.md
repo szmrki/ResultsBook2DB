@@ -4,29 +4,36 @@
 
 ## 特徴
 
-*   **PDF 解析**: Result Book (PDF形式) を読み込み、大会情報・試合情報・エンド情報・ショット情報・ストーン配置情報を自動抽出します。
-*   **ストーン検出**: 各大会に自動適応したYOLO モデルを使用して、Shot by Shot 画像からストーン配置の座標を検出します。初めて取得する大会の場合、ベースとなるモデル(`base.pt`)を用いて疑似ラベルを生成し、ファインチューニングを行います。学習後の重みは`大会名.pt`というファイルで保存されます。
-*   **データベース保存**: 抽出したデータを構造化された SQLite データベース (`.db`) に保存します。
+* **PDF 解析**: Result Book (PDF形式) を読み込み、大会情報・試合情報・エンド情報・ショット情報・ストーン配置情報を自動抽出します。
+* **ストーン検出**: 各大会に自動適応したYOLO モデルを使用して、Shot by Shot 画像からストーン配置の座標を検出します。初めて取得する大会の場合、ベースとなるモデル(`base.pt`)を用いて疑似ラベルを生成し、ファインチューニングを行います。学習後の重みは`大会名.pt`というファイルで保存されます。
+* **データベース保存**: 抽出したデータを構造化された SQLite データベース (`.db`) に保存します。
+
+## 処理フロー (System Flow)
+
+![システムの処理フロー](docs/flowchart.png)
 
 ## 必要要件
 
-*   Python 3.12+ (動作確認済み)
-*   パッケージマネージャー `uv`
-*   推奨環境: GPU搭載 PC
+* Python 3.12+ (動作確認済み)
+* パッケージマネージャー `uv`
+* 推奨環境: GPU搭載 PC
 
 ## ダウンロードと実行
 
 ### Windows 版
+
 GitHub の [Releases](https://github.com/szmrki/ResultsBook2DB/releases) から最新の実行ファイル（`.7z`）をダウンロードできます。
-*   **GPUについて**: 配布版は CUDA 12.8 用です。認識されない場合は [BUILD_GUIDE.md](BUILD_GUIDE.md) を参照しビルドしてください。
+
+* **GPUについて**: 配布版は CUDA 12.8 用です。認識されない場合は [BUILD_GUIDE.md](BUILD_GUIDE.md) を参照しビルドしてください。
 
 ### macOS / Linux 版
+
 [BUILD_GUIDE.md](BUILD_GUIDE.md) を参照してビルドしてください。
 
 ## 使用方法
 
-1.  **起動**: ダウンロードまたはビルドした `RB2DB.exe` (Linux/macOS の場合は `RB2DB`) を起動します。
-2.  **データベース設定**: 既存のデータベースファイル (`.db`) に追記するか、新規作成するかを選択します。
+1. **起動**: ダウンロードまたはビルドした `RB2DB.exe` (Linux/macOS の場合は `RB2DB`) を起動します。
+2. **データベース設定**: 既存のデータベースファイル (`.db`) に追記するか、新規作成するかを選択します。
 3. **PDFファイルの登録**: ダウンロードした Results Book (PDF) を入力します。複数ファイルの同時登録に対応しています。
 4. **モード選択と実行**: 対象大会が「4人制」か「ミックスダブルス (MD)」かを選択し、「解析を開始」ボタンをクリックします。
 
@@ -121,19 +128,20 @@ SQLite データベース (`.db`) は以下のテーブルで構成されてい�
 
 本システムは **[DigitalCurling3](https://github.com/digitalcurling/DigitalCurling3)** の座標系に準拠しています。
 
-*   **単位**: メートル (m)
-*   **原点**: デリバリー側のハック中心
-*   **X軸**: センターラインから左右に ±2.375
-*   **Y軸**: センターライン方向 (デリバリー側からハウス方向が正)
-    *   ティーライン (Tee Line): y = 38.405
-    *   バックライン (Back Line): y = 40.234
-*   **サイズ情報**:
-    *   ハウス半径: 1.829
-    *   ストーン半径: 0.145
+* **単位**: メートル (m)
+* **原点**: デリバリー側のハック中心
+* **X軸**: センターラインから左右に ±2.375
+* **Y軸**: センターライン方向 (デリバリー側からハウス方向が正)
+  * ティーライン (Tee Line): y = 38.405
+  * バックライン (Back Line): y = 40.234
+* **サイズ情報**:
+  * ハウス半径: 1.829
+  * ストーン半径: 0.145
 
 ## その他機能（ツールバー）
-*   **GPUステータスの確認**: 現在のPC環境においてGPUが正しく認識されているかを表示します。
-*   **精度評価レポート**: 自動ファインチューニング時に生成された検証結果が格納されているディレクトリを開きます。
+
+* **GPUステータスの確認**: 現在のPC環境においてGPUが正しく認識されているかを表示します。
+* **精度評価レポート**: 自動ファインチューニング時に生成された検証結果が格納されているディレクトリを開きます。
 
 ## ライセンス
 
@@ -143,10 +151,10 @@ SQLite データベース (`.db`) は以下のテーブルで構成されてい�
 
 本システムは以下の主要ライブラリを使用して開発されました。
 
-*   **[Ultralytics YOLO](https://github.com/ultralytics/ultralytics)**
-*   **[PyMuPDF (fitz)](https://github.com/pymupdf/PyMuPDF)**
-*   **[PySide6](https://pypi.org/project/PySide6/)**
-*   **[pdfplumber](https://github.com/jsvine/pdfplumber)**
-*   **[OpenCV](https://opencv.org/)**
+* **[Ultralytics YOLO](https://github.com/ultralytics/ultralytics)**
+* **[PyMuPDF (fitz)](https://github.com/pymupdf/PyMuPDF)**
+* **[PySide6](https://pypi.org/project/PySide6/)**
+* **[pdfplumber](https://github.com/jsvine/pdfplumber)**
+* **[OpenCV](https://opencv.org/)**
 
 Copyright (C) 2026 szmrki
