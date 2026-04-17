@@ -350,7 +350,8 @@ class Worker(QThread):
                     try:
                         fin_red = int(scores.at[0, "Total"]) #得点表のdfから最終得点を記録
                         fin_yellow = int(scores.at[1, "Total"])
-                    except ValueError:
+                    except (ValueError, TypeError):
+                        logger.warning(f"[{game_context}] Could not parse final scores from page {page_num}")
                         fin_red = None
                         fin_yellow = None
                     
@@ -428,7 +429,11 @@ class Worker(QThread):
                             turn = None; team = None; player_name = None
                             logger.warning(f"[{game_context}] End {num_end} - Shot {shot_num} - Shot info not found")
 
-                        shot_color = num2color[(hammers[num_end - 1] + (shot_num % 2)) % 2] #現在のショットの色を指定
+                        try:
+                            shot_color = num2color[(hammers[num_end - 1] + (shot_num % 2)) % 2] #現在のショットの色を指定
+                        except (TypeError, IndexError):
+                            logger.warning(f"[{game_context}] End {num_end} - Shot {shot_num} - Shot color not found")
+                            shot_color = None
                         cur.execute("""INSERT INTO shots(end_id, number, color, team, player_name, 
                                             type, turn, percent_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", 
                                             (end_id, shot_num, shot_color, team, player_name, 

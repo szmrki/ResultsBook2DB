@@ -153,20 +153,24 @@ def extract_game_result(page: pdfplumber.page.Page, is_md: bool = False) -> pd.D
 
     if table is None:
         logger.warning("Score table not found on Game Results page.")
-        df = pd.DataFrame()
+        # 得点表が見つからない場合も、列構成（LSFE, 1-10, Total）を用意する
+        cols = ["team", "LSFE"] + [str(i) for i in range(1, 11)] + ["Total"]
+        data = [
+            [team_red] + [None] * (len(cols) - 1),
+            [team_yellow] + [None] * (len(cols) - 1)
+        ]
+        df = pd.DataFrame(data, columns=cols)
         if is_md:
             return df, power_play_ends
         return df
+
 
     n_cols = len(table[0])
     columns = ["LSFE"] + [str(i) for i in range(1, n_cols-1)] + ["Total"]
     df = pd.DataFrame([[__try_int(cell) for cell in row] for row in table], columns=columns)
     df.insert(0, "team", [team_red, team_yellow])
 
-    if df.empty:
-        logger.warning("Extracted game result dataframe is empty.")
-    else:
-        logger.debug(f"Successfully extracted game result:\n{df}")
+    logger.debug(f"Successfully extracted game result:\n{df}")
     
     if is_md:
         return df, power_play_ends

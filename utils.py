@@ -8,6 +8,9 @@ from typing import Any
 from pathlib import Path
 
 def get_hammer(scores: pd.DataFrame, is_md: bool = False) -> list[int | None]: 
+    if scores["LSFE"].isnull().all(): #LSFEがすべてNoneの場合
+        return [None]
+
     """
         スコア表ベースでエンドごとのハンマーのindexを取得する
         Args:
