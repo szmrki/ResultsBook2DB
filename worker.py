@@ -63,6 +63,9 @@ class Worker(QThread):
 
             # 処理本体
             self.conn = sqlite3.connect(self.db_path)
+
+            # --- 外部キー制約をONにする ---
+            self.conn.execute("PRAGMA foreign_keys = ON;")
             
             cur_init = self.conn.cursor()
             cur_init.execute('''CREATE TABLE IF NOT EXISTS lsds (
