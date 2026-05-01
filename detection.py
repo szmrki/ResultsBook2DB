@@ -30,62 +30,74 @@ YB = DC3_TEE_LINE - YA * TEE_LINE
 
 #class_names = ["red", "yellow"]
 
-def get_stones_pos(img: np.ndarray, model: YOLO) -> np.ndarray:
+def get_stones_pos(imgs: list[np.ndarray], model: YOLO) -> list[np.ndarray]:
     """
-        ストーン座標をモデルを用いて取得する
+        ストーン座標をモデルを用いて取得する（バッチ推論）
         Args:
-            img : シート画像のnumpy配列
+            imgs : シート画像のnumpy配列リスト
             model : YOLOのモデル
         Returns:
-            np.ndarray : (16 x 6)のストーン情報の配列
+            list[np.ndarray] : 各画像について (16 x 6) のストーン情報配列のリスト
     """
-    #必要であれば反転
-    row20 = img[20,:,:]
-    black_pixels = np.all(row20==0, axis=1) 
-    if np.all(black_pixels[1:WIDTH]):  #左右1ピクセルが余白の可能性があるため
-          img = cv2.flip(img, -1)
+    if not imgs:
+        return []
 
-    #誤検出を防ぐため上下に白でマスク
-    img[:20,1:-2] = 255
-    img[-19:,1:-2] = 255  
+    # 画像ごとの前処理（反転判定・上下マスク）
+    preprocessed = []
+    for img in imgs:
+        row20 = img[20,:,:]
+        black_pixels = np.all(row20==0, axis=1)
+        if np.all(black_pixels[1:WIDTH]):  #左右1ピクセルが余白の可能性があるため
+            img = cv2.flip(img, -1)
 
-    results = model(img, 
-                    iou=0.3, 
-                    conf=0.5, 
+        #誤検出を防ぐため上下に白でマスク
+        img[:20,1:-2] = 255
+        img[-19:,1:-2] = 255
+        preprocessed.append(img)
+
+    # バッチで一括推論
+    results = model(preprocessed,
+                    iou=0.3,
+                    conf=0.5,
                     save=False,
                     exist_ok=True,
-                ) #modelに通す
-                
-    # 中心座標リスト
-    centers = []
+                )
 
-    # バウンディングボックスから中心座標を計算
-    for box in results[0].boxes:
-        x1, y1, x2, y2 = box.xyxy[0].tolist()  # 左上(x1, y1), 右下(x2, y2)
-        cx = (x1 + x2) / 2
-        cy = (y1 + y2) / 2
+    stones_list = []
+    # 結果は入力順に並ぶ
+    for result in results:
+        # 中心座標リスト
+        centers = []
 
-        #座標をDCに変換
-        cx = XA * cx - XB
-        cy = YA * cy + YB
-        dist = np.sqrt((cx - DC3_CENTER_X)**2 + (cy - DC3_TEE_LINE)**2)
-        is_inhouse = int(dist <= DC3_RADIUS + DC3_STONE_RADIUS)
-        is_insheet = 1
-        cls_id = int(box.cls[0]) #赤が0, 黄色が1
-        
-        centers.append([cls_id, cx, cy, dist, is_inhouse, is_insheet])
-         
-    if not centers: #空リストのときには[0, 0, 0, 0, 0, 0]を追加しておく
-        centers.append([0]*6)
+        # バウンディングボックスから中心座標を計算
+        for box in result.boxes:
+            x1, y1, x2, y2 = box.xyxy[0].tolist()  # 左上(x1, y1), 右下(x2, y2)
+            cx = (x1 + x2) / 2
+            cy = (y1 + y2) / 2
 
-    stones = np.array(centers)
+            #座標をDCに変換
+            cx = XA * cx - XB
+            cy = YA * cy + YB
+            dist = np.sqrt((cx - DC3_CENTER_X)**2 + (cy - DC3_TEE_LINE)**2)
+            is_inhouse = int(dist <= DC3_RADIUS + DC3_STONE_RADIUS)
+            is_insheet = 1
+            cls_id = int(box.cls[0]) #赤が0, 黄色が1
 
-    row = stones.shape[0]
-    if row < 16:
-        padding = np.zeros((16 - row, 6))
-        stones = np.vstack([stones, padding]) #(16,6)
+            centers.append([cls_id, cx, cy, dist, is_inhouse, is_insheet])
 
-    return stones
+        if not centers: #空リストのときには[0, 0, 0, 0, 0, 0]を追加しておく
+            centers.append([0]*6)
+
+        stones = np.array(centers)
+
+        row = stones.shape[0]
+        if row < 16:
+            padding = np.zeros((16 - row, 6))
+            stones = np.vstack([stones, padding]) #(16,6)
+
+        stones_list.append(stones)
+
+    return stones_list
 
 def create_pseudo_label(model: YOLO, image_dir: Path, output_dir: Path, threshold: float = 0.8) -> int:
     """
