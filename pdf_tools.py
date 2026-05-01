@@ -76,13 +76,8 @@ def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model: YOLO, is_md: 
     if is_md and "prepositioned stones" in [t.lower() for t in text]:
         del shotbyshot_list[0]  #先頭画像を削除
             
-    stones_end_list = []
-    for img in shotbyshot_list:
-        img = img["img"]
-
-        stones = get_stones_pos(img, model)
-        stones_end_list.append(stones)
-
+    imgs = [entry["img"] for entry in shotbyshot_list]
+    stones_end_list = get_stones_pos(imgs, model)
     stones_end = np.array(stones_end_list)  #(num_shots, 16, 6)
 
     return stones_end, shot_info_list
