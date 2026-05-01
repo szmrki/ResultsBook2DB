@@ -21,7 +21,7 @@ jobs:
         id: extract_version
         shell: bash
         run: |
-          VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' pyproject.toml)
+          VERSION=$(sed -n 's/^version\s*=\s*"\([^"]*\)"/\1/p' pyproject.toml)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
 

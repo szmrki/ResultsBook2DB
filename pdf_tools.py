@@ -77,7 +77,8 @@ def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model: YOLO, is_md: 
         del shotbyshot_list[0]  #先頭画像を削除
             
     imgs = [entry["img"] for entry in shotbyshot_list]
-    stones_end_list = get_stones_pos(imgs, model)
+    is_negated_list = [entry.get("is_negated", False) for entry in shotbyshot_list]
+    stones_end_list = get_stones_pos(imgs, model, is_negated_list)
     stones_end = np.array(stones_end_list)  #(num_shots, 16, 6)
 
     return stones_end, shot_info_list
@@ -329,13 +330,15 @@ def __extract_images(doc: fitz.Document, page: fitz.Page) -> tuple[list[dict[str
         xref = img[0]
         pix = fitz.Pixmap(doc, xref)
         img = __pixmap2cv2(pix)
-        if __black_more_than_white(img):
+        is_negated = __black_more_than_white(img)
+        if is_negated:
             img = 255 - img  #反転
 
         shotbyshot_list.append({
             "img": img,
             "x": x0,
             "y": y0,
+            "is_negated": is_negated,
         })
     return shotbyshot_list, bboxes
 
@@ -422,20 +425,14 @@ def __black_more_than_white(image_array: np.ndarray) -> bool:
         Args:
             image_array : 画像のnumpy配列
         Returns:
-            bool : 黒≧白ならTrue、そうでなければFalse
+            bool : 黒 > 白ならTrue、そうでなければFalse
     """
-    # 白ピクセルの判定: 各ピクセルの(R,G,B)がすべて255であるか
-    white_pixels = np.all(image_array == [255, 255, 255], axis=-1)
-    white_count = np.sum(white_pixels)
+    # 白ピクセルの判定：各ピクセルの(R,G,B)がすべて255であるか
+    white_count = np.sum(np.all(image_array == 255, axis=-1))
+    # 黒ピクセルの判定：各ピクセルの(R,G,B)がすべて0であるか
+    black_count = np.sum(np.all(image_array == 0, axis=-1))
     
-    # 黒ピクセルの判定: 各ピクセルの(R,G,B)がすべて0であるか
-    black_pixels = np.all(image_array == [0, 0, 0], axis=-1)
-    black_count = np.sum(black_pixels)
-    
-    if white_count >= black_count:
-        return False
-    else:
-        return True
+    return black_count > white_count
 
 def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
     """

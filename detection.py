@@ -30,12 +30,13 @@ YB = DC3_TEE_LINE - YA * TEE_LINE
 
 #class_names = ["red", "yellow"]
 
-def get_stones_pos(imgs: list[np.ndarray], model: YOLO) -> list[np.ndarray]:
+def get_stones_pos(imgs: list[np.ndarray], model: YOLO, is_negated: list[bool]) -> list[np.ndarray]:
     """
         ストーン座標をモデルを用いて取得する（バッチ推論）
         Args:
             imgs : シート画像のnumpy配列リスト
             model : YOLOのモデル
+            is_negated : 各画像がネガポジ反転済みかどうかのフラグリスト
         Returns:
             list[np.ndarray] : 各画像について (16 x 6) のストーン情報配列のリスト
     """
@@ -44,11 +45,16 @@ def get_stones_pos(imgs: list[np.ndarray], model: YOLO) -> list[np.ndarray]:
 
     # 画像ごとの前処理（反転判定・上下マスク）
     preprocessed = []
-    for img in imgs:
+    for img, negated in zip(imgs, is_negated):
         row20 = img[20,:,:]
         black_pixels = np.all(row20==0, axis=1)
         if np.all(black_pixels[1:WIDTH]):  #左右1ピクセルが余白の可能性があるため
             img = cv2.flip(img, -1)
+        elif negated:
+            top_white = np.sum(np.all(img[:300, :, :] == 255, axis=-1))
+            bottom_white = np.sum(np.all(img[300:, :, :] == 255, axis=-1))
+            if top_white > bottom_white:
+                img = cv2.flip(img, -1)
 
         #誤検出を防ぐため上下に白でマスク
         img[:20,1:-2] = 255
