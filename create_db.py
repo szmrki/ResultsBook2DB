@@ -9,47 +9,53 @@ import sys
 from pathlib import Path
 
 def set_tables(dbname: str | Path, is_md: bool = False) -> None:
-    conn = sqlite3.connect(dbname)
+    conn = sqlite3.connect(dbname, isolation_level=None)  # autocommit モード（DDLをトランザクション内で実行するため）
     cur = conn.cursor()
-    cur.execute("PRAGMA foreign_keys = ON;")
-    cur.execute(
-        '''CREATE TABLE events(id INTEGER PRIMARY KEY AUTOINCREMENT, name STRING NOT NULL UNIQUE, 
-        year INTEGER, category STRING)'''
-    )
-    cur.execute(
-        '''CREATE TABLE games(id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER NOT NULL, page INTEGER, 
-        team_red STRING, team_yellow STRING, final_score_red INTEGER, final_score_yellow INTEGER,
-        FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
-    )
-    if is_md:
+    try:
+        cur.execute("BEGIN")
+        cur.execute("PRAGMA foreign_keys = ON;")
         cur.execute(
-            '''CREATE TABLE ends(id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL, page INTEGER, 
-            number INTEGER, color_hammer STRING, score_red INTEGER, score_yellow INTEGER, is_power_play INTEGER,
+            '''CREATE TABLE events(id INTEGER PRIMARY KEY AUTOINCREMENT, name STRING NOT NULL UNIQUE,
+            year INTEGER, category STRING)'''
+        )
+        cur.execute(
+            '''CREATE TABLE games(id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER NOT NULL, page INTEGER,
+            team_red STRING, team_yellow STRING, final_score_red INTEGER, final_score_yellow INTEGER,
+            FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
+        )
+        if is_md:
+            cur.execute(
+                '''CREATE TABLE ends(id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL, page INTEGER,
+                number INTEGER, color_hammer STRING, score_red INTEGER, score_yellow INTEGER, is_power_play INTEGER,
+                FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
+            )
+        else:
+            cur.execute(
+                '''CREATE TABLE ends(id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL, page INTEGER,
+                number INTEGER, color_hammer STRING, score_red INTEGER, score_yellow INTEGER,
+                FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
+            )
+        cur.execute(
+            '''CREATE TABLE shots(id INTEGER PRIMARY KEY AUTOINCREMENT, end_id INTEGER NOT NULL, number INTEGER,
+            color STRING, team STRING, player_name STRING, type STRING, turn STRING, percent_score INTEGER,
+            FOREIGN KEY(end_id) REFERENCES ends(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
+        )
+        cur.execute(
+            '''CREATE TABLE stones(id INTEGER PRIMARY KEY AUTOINCREMENT, shot_id INTEGER NOT NULL, color STRING,
+            x FLOAT, y FLOAT, distance_from_center FLOAT, inhouse INTEGER, insheet INTEGER,
+            FOREIGN KEY(shot_id) REFERENCES shots(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
+        )
+        cur.execute(
+            '''CREATE TABLE lsds (id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL,
+            team STRING, player_name STRING, distance_cm FLOAT,
             FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
         )
-    else:
-        cur.execute(
-            '''CREATE TABLE ends(id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL, page INTEGER, 
-            number INTEGER, color_hammer STRING, score_red INTEGER, score_yellow INTEGER,
-            FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
-        )
-    cur.execute(
-        '''CREATE TABLE shots(id INTEGER PRIMARY KEY AUTOINCREMENT, end_id INTEGER NOT NULL, number INTEGER, 
-        color STRING, team STRING, player_name STRING, type STRING, turn STRING, percent_score INTEGER,
-        FOREIGN KEY(end_id) REFERENCES ends(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
-    )
-    cur.execute(
-        '''CREATE TABLE stones(id INTEGER PRIMARY KEY AUTOINCREMENT, shot_id INTEGER NOT NULL, color STRING, 
-        x FLOAT, y FLOAT, distance_from_center FLOAT, inhouse INTEGER, insheet INTEGER,
-        FOREIGN KEY(shot_id) REFERENCES shots(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
-    )
-    cur.execute(
-        '''CREATE TABLE lsds (id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL, 
-        team STRING, player_name STRING, distance_cm FLOAT,
-        FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
-    )
-    conn.commit()
-    conn.close()
+        cur.execute("COMMIT")
+    except Exception:
+        cur.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     filename = sys.argv[1]

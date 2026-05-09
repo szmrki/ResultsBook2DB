@@ -95,10 +95,12 @@ class Worker(QThread):
                 try:
                     success = self.executemodel(pdf_path, tournament_name, prefix)
                     if not success:
+                        self.conn.rollback()  # 大会名重複した際はFalseが返された上で、ここでロールバック
                         err_msg = f"{entry['path'].name}: Event Name '{tournament_name}' は既に使用されています"
                         errors.append(err_msg)
                         logger.error(err_msg)
                 except Exception as e:
+                    self.conn.rollback()  # その他のエラーが起きた際は一貫してここでロールバック
                     error_msg = traceback.format_exc()
                     errors.append(f"{entry['path'].name}: {e}")
                     logger.error(error_msg)
@@ -207,7 +209,6 @@ class Worker(QThread):
             year, category = self.__extract_year_and_category(game)
             cur.execute('INSERT INTO events(name, year, category) VALUES (?, ?, ?)', (game, year, category)) 
         except sqlite3.IntegrityError:
-            self.conn.rollback()
             logger.warning(f"Duplicate event name found in database: {game}")
             return False
 
