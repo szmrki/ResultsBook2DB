@@ -12,7 +12,29 @@ permissions:
   contents: write
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Check if version changed
+        id: check
+        shell: bash
+        run: |
+          CURRENT=$(sed -n 's/^version\s*=\s*"\([^"]*\)"/\1/p' pyproject.toml)
+          PREVIOUS=$(git show HEAD~1:pyproject.toml | sed -n 's/^version\s*=\s*"\([^"]*\)"/\1/p')
+          if [ "$CURRENT" != "$PREVIOUS" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
   build:
+    needs: check
+    if: needs.check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     outputs:
       version: ${{ steps.extract_version.outputs.version }}
@@ -87,15 +109,15 @@ jobs:
           # 直コミットからfeat/fix/perfを抽出
           if [ -z "$PREV_TAG" ]; then
             COMMITS=$(git log --pretty=format:"%s" --no-merges \
-              | grep -E "^(feat|fix|perf)(\(.+\))?:" | sed 's/^/- /') || true
+              | grep -E "^(feat|fix|perf)(\(.+\))?:" | sed 's/^/- /' | sed 'G') || true
           else
             COMMITS=$(git log ${PREV_TAG}..HEAD --pretty=format:"%s" --no-merges \
-              | grep -E "^(feat|fix|perf)(\(.+\))?:" | sed 's/^/- /') || true
+              | grep -E "^(feat|fix|perf)(\(.+\))?:" | sed 's/^/- /' | sed 'G') || true
           fi
 
           # PRノートに直コミット分を追記
           if [ -n "$COMMITS" ]; then
-            NOTES=$(printf "%s\n\n## その他の変更\n%s" "$PR_NOTES" "$COMMITS")
+            NOTES=$(printf "%s\n\n## Changes\n%s" "$PR_NOTES" "$COMMITS")
           else
             NOTES="$PR_NOTES"
           fi
