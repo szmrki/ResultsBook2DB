@@ -39,6 +39,22 @@ jobs:
       - name: Compress with 7z
         run: 7z a ResultsBook2DB_v${{ steps.extract_version.outputs.version }}_win64.7z ./dist/ResultsBook2DB/
 
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        run: |
+          TAG="${{ steps.extract_version.outputs.tag }}"
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${TAG}$" | head -1)
+          if [ -z "$PREV_TAG" ]; then
+            NOTES=$(git log --pretty=format:"%s" --no-merges | grep -E "^(feat|fix|perf)(\(.+\))?:")
+          else
+            NOTES=$(git log ${PREV_TAG}..HEAD --pretty=format:"%s" --no-merges | grep -E "^(feat|fix|perf)(\(.+\))?:")
+          fi
+          NOTES=$(echo "$NOTES" | sed 's/^/- /')
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Create Release and Upload Asset
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -50,7 +66,7 @@ jobs:
           if ! git ls-remote --tags origin | grep -q "refs/tags/$TAG"; then
             gh release create "$TAG" \
               --title "Release $TAG" \
-              --generate-notes \
+              --notes "${{ steps.notes.outputs.notes }}" \
               "$ASSET"
           else
             echo "Release $TAG already exists. Skipping."
