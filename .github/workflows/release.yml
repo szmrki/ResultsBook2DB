@@ -42,15 +42,37 @@ jobs:
       - name: Generate release notes
         id: notes
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.extract_version.outputs.tag }}"
           PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${TAG}$" | head -1)
+
+          # GitHub自動生成ノート（PRタイトル・説明）
           if [ -z "$PREV_TAG" ]; then
-            NOTES=$(git log --pretty=format:"%s" --no-merges | grep -E "^(feat|fix|perf)(\(.+\))?:")
+            PR_NOTES=$(gh api repos/${{ github.repository }}/releases/generate-notes \
+              -f tag_name="$TAG" --jq '.body')
           else
-            NOTES=$(git log ${PREV_TAG}..HEAD --pretty=format:"%s" --no-merges | grep -E "^(feat|fix|perf)(\(.+\))?:")
+            PR_NOTES=$(gh api repos/${{ github.repository }}/releases/generate-notes \
+              -f tag_name="$TAG" -f previous_tag_name="$PREV_TAG" --jq '.body')
           fi
-          NOTES=$(echo "$NOTES" | sed 's/^/- /')
+
+          # 直コミットからfeat/fix/perfを抽出
+          if [ -z "$PREV_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"%s" --no-merges \
+              | grep -E "^(feat|fix|perf)(\(.+\))?:" | sed 's/^/- /')
+          else
+            COMMITS=$(git log ${PREV_TAG}..HEAD --pretty=format:"%s" --no-merges \
+              | grep -E "^(feat|fix|perf)(\(.+\))?:" | sed 's/^/- /')
+          fi
+
+          # PRノートに直コミット分を追記
+          if [ -n "$COMMITS" ]; then
+            NOTES=$(printf "%s\n\n## その他の変更\n%s" "$PR_NOTES" "$COMMITS")
+          else
+            NOTES="$PR_NOTES"
+          fi
+
           echo "notes<<EOF" >> $GITHUB_OUTPUT
           echo "$NOTES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
