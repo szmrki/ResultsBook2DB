@@ -490,7 +490,7 @@ def extract_year_and_category(game: str, is_md: bool) -> tuple[int | None, str |
     大会名文字列から西暦とカテゴリを抽出する。
 
     Args:
-        game: 大会名文字列（例: "2024 WJCC Women's Curling Championship"）
+        game: 大会名文字列（例: "WWCC2024"）
         is_md: 混合ダブルス（MD）かどうか
 
     Returns:
