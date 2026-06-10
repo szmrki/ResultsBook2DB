@@ -42,7 +42,7 @@ def set_tables(dbname: str | Path, is_md: bool = False) -> None:
         )
         cur.execute(
             '''CREATE TABLE stones(id INTEGER PRIMARY KEY AUTOINCREMENT, shot_id INTEGER NOT NULL, color STRING,
-            x FLOAT, y FLOAT, distance_from_center FLOAT, inhouse INTEGER, insheet INTEGER,
+            x FLOAT, y FLOAT, distance_from_center FLOAT, inhouse INTEGER, insheet INTEGER, shot_order INTEGER,
             FOREIGN KEY(shot_id) REFERENCES shots(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
         )
         cur.execute(
