@@ -17,7 +17,6 @@ import sys
 from itertools import zip_longest
 import io
 import logging
-import re
 from typing import Any
 from pathlib import Path
 
@@ -204,7 +203,7 @@ class Worker(QThread):
         cur = self.conn.cursor()
         try:
             #eventテーブルに大会名、年、カテゴリを記述
-            year, category = self.__extract_year_and_category(game)
+            year, category = extract_year_and_category(game, self.is_md)
             cur.execute('INSERT INTO events(name, year, category) VALUES (?, ?, ?)', (game, year, category))
         except sqlite3.IntegrityError:
             logger.warning(f"Duplicate event name found in database: {game}")
@@ -456,32 +455,3 @@ class Worker(QThread):
                 self.progress_signal.emit(100, f"{prefix}Fine-tuning complete.")
 
         return YOLO(game_pt)
-
-    def __extract_year_and_category(self, game: str) -> tuple[int | None, str | None]:
-        # 大会名(game)から西暦(year)を抽出
-        year_match = re.search(r'\d{4}', game)
-        year = int(year_match.group()) if year_match else None
-        
-        # カテゴリの特定
-        category = None
-        if self.is_md:
-            category = "MD"
-        else:
-            if "WJCC" in game:
-                if "Women" in game:
-                    category = "Junior Women"
-                elif "Men" in game:
-                    category = "Junior Men"
-            else:
-                if "Women" in game:
-                    category = "Women"
-                elif "Men" in game:
-                    category = "Men"
-                else:
-                    if "WMCC" in game:
-                        category = "Men"
-                    elif "WWCC" in game:
-                        category = "Women"
-                    else:
-                        category = None
-        return year, category
