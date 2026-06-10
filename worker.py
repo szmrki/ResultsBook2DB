@@ -200,14 +200,12 @@ class Worker(QThread):
         """
         game = tournament_name
         num2color = {0: "red", 1: "yellow"}
-        work_dir = Path.cwd()
-        model_dir = resource_path(Path("complete_model"))
 
         cur = self.conn.cursor()
         try:
             #eventテーブルに大会名、年、カテゴリを記述
             year, category = self.__extract_year_and_category(game)
-            cur.execute('INSERT INTO events(name, year, category) VALUES (?, ?, ?)', (game, year, category)) 
+            cur.execute('INSERT INTO events(name, year, category) VALUES (?, ?, ?)', (game, year, category))
         except sqlite3.IntegrityError:
             logger.warning(f"Duplicate event name found in database: {game}")
             return False
@@ -217,115 +215,7 @@ class Worker(QThread):
         doc = fitz.open(pdf_path)
         logger.info(f"Processing PDF: {pdf_path}")
 
-        #モデルの定義
-        #該当の大会についてファインチューニング済みであればそれを用いる
-        game_pt = model_dir / f"{game}.pt"
-        if not game_pt.exists():
-        #if False:
-            start_time_ft = time.time()
-            self.progress_signal.emit(0, f"{prefix}Preparing fine-tuning...")
-
-            base_model_path = resource_path(model_dir / "base.pt")
-            if not base_model_path.exists():
-                 raise FileNotFoundError(f"Base model not found at {base_model_path}. Please ensure 'complete_model/base.pt' exists.")
-
-            model = YOLO(base_model_path) #ベースモデルを選択
-        
-            ### PDFファイルから画像を400枚程度抽出し、予測を行い疑似ラベルを生成
-            dataset_dir = work_dir / "yolo_dataset"
-            image_dir = dataset_dir / "images"
-            label_dir = dataset_dir / "labels"
-            yaml_path = work_dir / "yaml" / "data.yaml"     
-            
-            try:
-                num_images = save_images(doc, output_dir=image_dir, save_num=400)
-                num_labels = create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir, threshold=0.75)
-                logger.info(f"Dataset prepared: {num_labels} pseudo labels from {num_images} images.")
-                split_train_val(image_dir, label_dir, train_ratio=0.8)
-                create_yaml(yaml_path, dataset_dir)
-            except Exception as e:
-                logger.error(f"Failed to prepare dataset for fine-tuning: {e}")
-                raise
-
-            # コールバック関数を定義 ---
-            def on_train_epoch_end(trainer):
-                curr = trainer.epoch + 1
-                total = trainer.epochs
-                self.progress_signal.emit(int(curr/total*100), f"{prefix}Fine-tuning...")
-                # 中断要求があれば、現在のエポック完了後に学習を安全に停止
-                if self.isInterruptionRequested():
-                    trainer.stop = True
-
-            # コールバック登録
-            model.add_callback("on_train_epoch_end", on_train_epoch_end)
-
-            ### 疑似ラベルを用いてモデルのファインチューニングを行う
-            try:
-                logger.info(f"Starting fine-tuning for event: {game}")
-                results = model.train(
-                    data=resource_path(yaml_path),    # データセット（train/val のパスを含む）
-                    epochs=50,
-                    imgsz=600,
-                    iou=0.3,
-                    conf=0.5,
-                    save=True,
-                    name=game,             # 保存先フォルダ名を大会名にする（runs/detect/{game}）
-                    exist_ok=False, # 同じ大会名が再度実行された場合は自動で連番(game2, game3...)を付与
-                    workers=0,      # 動作安定のため、シングルスレッドによる実行
-                    patience=10,     # Early Stoppingを10エポックに設定
-                )
-                # 学習結果の要約をログに記録
-                final_epoch = model.trainer.epoch + 1
-                if not self.isInterruptionRequested():
-                    if results and hasattr(results, 'results_dict'):
-                        map50 = results.results_dict.get('metrics/mAP50(B)', 'N/A')
-                        map50_95 = results.results_dict.get('metrics/mAP50-95(B)', 'N/A')
-                        precision = results.results_dict.get('metrics/precision(B)', 'N/A')
-                        recall = results.results_dict.get('metrics/recall(B)', 'N/A')
-                        logger.info(f"""Fine-tuning complete. Results: mAP50={map50:.6f}, mAP50-95={map50_95:.6f}, Precision={precision:.6f}, Recall={recall:.6f}""")
-                    else:
-                        logger.info(f"Fine-tuning complete. Accuracy metrics not available.")
-            except Exception as e:
-                logger.error(f"Fine-tuning failed for event '{game}': {e}")
-                logger.error(traceback.format_exc())
-                model.clear_callback("on_train_epoch_end")
-                raise
-
-            # 中断時は重みを保存しない
-            if not self.isInterruptionRequested():
-                Path(game_pt).unlink(missing_ok=True) #game_ptが存在する場合削除
-                try:
-                    # model.trainer.save_dir から実際の保存先を取得してコピー
-                    save_dir = Path(model.trainer.save_dir)
-                    best_pt = save_dir / "weights" / "best.pt"
-                    shutil.copy2(best_pt, game_pt)
-                    logger.info(f"Successfully saved fine-tuned model from {best_pt} as {game_pt.name}")
-                except Exception as e:
-                    logger.warning(f"Could not copy best.pt to {game_pt.name}: {e}. Attempting direct save.")
-                    try:
-                        model.save(game_pt)
-                    except Exception as save_e:
-                        logger.error(f"Failed to save model directly: {save_e}")
-                        raise
-            
-            #画像とラベルを削除
-            try:
-                delete_files(image_dir / "train")
-                delete_files(label_dir / "train")
-                delete_files(image_dir / "val")
-                delete_files(label_dir / "val")
-            except Exception as e:
-                logger.warning(f"Failed to clean up dataset directories: {e}")
-
-            # 後始末
-            model.clear_callback("on_train_epoch_end")
-            if not self.isInterruptionRequested():
-                elapsed_ft = time.time() - start_time_ft
-                logger.info(f"[{game}] Fine-tuning complete ({final_epoch} epochs) (took {elapsed_ft:.2f}s).")
-                self.progress_signal.emit(100, f"{prefix}Fine-tuning complete.")
-        else: pass
-        #break
-        model = YOLO(game_pt) #ファインチューニング済みモデルをロード
+        model = self._prepare_model(game, doc, prefix)
 
         start_time_det = time.time()
         with pdfplumber.open(pdf_path) as pdf:
@@ -465,6 +355,107 @@ class Worker(QThread):
             elapsed_det = time.time() - start_time_det
             logger.info(f"[{game}] Detection complete (took {elapsed_det:.2f}s).")
         return True
+
+    def _prepare_model(self, game: str, doc, prefix: str) -> "YOLO":
+        """ファインチューニング済みモデルが存在すればロード、なければ疑似ラベルでFTして保存する。"""
+        work_dir = Path.cwd()
+        model_dir = resource_path(Path("complete_model"))
+        game_pt = model_dir / f"{game}.pt"
+
+        if not game_pt.exists():
+            start_time_ft = time.time()
+            self.progress_signal.emit(0, f"{prefix}Preparing fine-tuning...")
+
+            base_model_path = resource_path(model_dir / "base.pt")
+            if not base_model_path.exists():
+                raise FileNotFoundError(f"Base model not found at {base_model_path}. Please ensure 'complete_model/base.pt' exists.")
+
+            model = YOLO(base_model_path)
+
+            dataset_dir = work_dir / "yolo_dataset"
+            image_dir = dataset_dir / "images"
+            label_dir = dataset_dir / "labels"
+            yaml_path = work_dir / "yaml" / "data.yaml"
+
+            try:
+                num_images = save_images(doc, output_dir=image_dir, save_num=400)
+                num_labels = create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir, threshold=0.75)
+                logger.info(f"Dataset prepared: {num_labels} pseudo labels from {num_images} images.")
+                split_train_val(image_dir, label_dir, train_ratio=0.8)
+                create_yaml(yaml_path, dataset_dir)
+            except Exception as e:
+                logger.error(f"Failed to prepare dataset for fine-tuning: {e}")
+                raise
+
+            def on_train_epoch_end(trainer):
+                curr = trainer.epoch + 1
+                total = trainer.epochs
+                self.progress_signal.emit(int(curr / total * 100), f"{prefix}Fine-tuning...")
+                if self.isInterruptionRequested():
+                    trainer.stop = True
+
+            model.add_callback("on_train_epoch_end", on_train_epoch_end)
+
+            try:
+                logger.info(f"Starting fine-tuning for event: {game}")
+                results = model.train(
+                    data=resource_path(yaml_path),
+                    epochs=50,
+                    imgsz=600,
+                    iou=0.3,
+                    conf=0.5,
+                    save=True,
+                    name=game,
+                    exist_ok=False,
+                    workers=0,
+                    patience=10,
+                )
+                final_epoch = model.trainer.epoch + 1
+                if not self.isInterruptionRequested():
+                    if results and hasattr(results, 'results_dict'):
+                        map50 = results.results_dict.get('metrics/mAP50(B)', 'N/A')
+                        map50_95 = results.results_dict.get('metrics/mAP50-95(B)', 'N/A')
+                        precision = results.results_dict.get('metrics/precision(B)', 'N/A')
+                        recall = results.results_dict.get('metrics/recall(B)', 'N/A')
+                        logger.info(f"Fine-tuning complete. Results: mAP50={map50:.6f}, mAP50-95={map50_95:.6f}, Precision={precision:.6f}, Recall={recall:.6f}")
+                    else:
+                        logger.info("Fine-tuning complete. Accuracy metrics not available.")
+            except Exception as e:
+                logger.error(f"Fine-tuning failed for event '{game}': {e}")
+                logger.error(traceback.format_exc())
+                model.clear_callback("on_train_epoch_end")
+                raise
+
+            if not self.isInterruptionRequested():
+                Path(game_pt).unlink(missing_ok=True)
+                try:
+                    save_dir = Path(model.trainer.save_dir)
+                    best_pt = save_dir / "weights" / "best.pt"
+                    shutil.copy2(best_pt, game_pt)
+                    logger.info(f"Successfully saved fine-tuned model from {best_pt} as {game_pt.name}")
+                except Exception as e:
+                    logger.warning(f"Could not copy best.pt to {game_pt.name}: {e}. Attempting direct save.")
+                    try:
+                        model.save(game_pt)
+                    except Exception as save_e:
+                        logger.error(f"Failed to save model directly: {save_e}")
+                        raise
+
+            try:
+                delete_files(image_dir / "train")
+                delete_files(label_dir / "train")
+                delete_files(image_dir / "val")
+                delete_files(label_dir / "val")
+            except Exception as e:
+                logger.warning(f"Failed to clean up dataset directories: {e}")
+
+            model.clear_callback("on_train_epoch_end")
+            if not self.isInterruptionRequested():
+                elapsed_ft = time.time() - start_time_ft
+                logger.info(f"[{game}] Fine-tuning complete ({final_epoch} epochs) (took {elapsed_ft:.2f}s).")
+                self.progress_signal.emit(100, f"{prefix}Fine-tuning complete.")
+
+        return YOLO(game_pt)
 
     def __extract_year_and_category(self, game: str) -> tuple[int | None, str | None]:
         # 大会名(game)から西暦(year)を抽出
