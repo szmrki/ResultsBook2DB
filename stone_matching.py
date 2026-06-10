@@ -44,6 +44,7 @@ def match_sequential(
     arrival_threshold: float = ARRIVAL_THRESHOLD,
     direction_tolerance: float = DIRECTION_TOLERANCE,
     cost_matrix_override: np.ndarray | None = None,
+    log_context: str = "",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
     1ショット分の局面遷移を二部マッチングで解き、現局面の各ストーンにラベルを付与する。
@@ -59,6 +60,7 @@ def match_sequential(
         direction_tolerance: 逆走とみなさない y 差の許容量(m)。
         cost_matrix_override: 距離コスト部分を外部行列で上書きする場合に指定（学習用）。
             指定時はハード制約（色・方向）はオーバーライド側で適用済みとみなす。
+        log_context: 警告ログの先頭に付与する文脈文字列（例: "[大会 | 対戦 | End n (end_id=X)] "）。
 
     Returns:
         tuple[list[dict], list[dict]]:
@@ -79,7 +81,7 @@ def match_sequential(
         for s in current_stones:
             if expected_color and s['color'] != expected_color:
                 logger.warning(
-                    f"Shot {shot_num}: Initial stone color mismatch "
+                    f"{log_context}Shot {shot_num}: Initial stone color mismatch "
                     f"(Expected {expected_color}, Got {s['color']})"
                 )
             s['label'] = shot_num
@@ -156,7 +158,7 @@ def match_sequential(
         if expected_color and final_active[idx]['color'] != expected_color:
             # ハンマールールに反する: 負値ラベルで「要確認」を示す
             logger.warning(
-                f"Shot {shot_num}: Unmatched stone color is "
+                f"{log_context}Shot {shot_num}: Unmatched stone color is "
                 f"'{final_active[idx]['color']}', but expected '{expected_color}'."
             )
             final_active[idx]['label'] = -shot_num
@@ -194,20 +196,29 @@ def ensure_shot_order_column(conn: sqlite3.Connection) -> None:
         logger.info("Added 'shot_order' column to stones table.")
 
 
-def _fetch_color_hammer(conn: sqlite3.Connection, end_id: int) -> str | None:
-    """エンドのハンマー色を取得する。
+def _fetch_end_metadata(
+    conn: sqlite3.Connection, end_id: int
+) -> tuple[str, str, str, int, str | None] | None:
+    """エンドの大会名・対戦カード・エンド番号・ハンマー色を取得する（ログ用文脈情報）。
 
     Args:
         conn: SQLite 接続。
         end_id: 対象エンドのID。
 
     Returns:
-        str | None: 'red' / 'yellow' / None。
+        tuple | None: (event_name, team_red, team_yellow, number, color_hammer)。
+            エンドが見つからない場合は None。
     """
     cur = conn.cursor()
-    cur.execute("SELECT color_hammer FROM ends WHERE id = ?", (end_id,))
-    row = cur.fetchone()
-    return row[0] if row else None
+    cur.execute(
+        """SELECT e.name, g.team_red, g.team_yellow, en.number, en.color_hammer
+           FROM ends en
+           JOIN games g ON en.game_id = g.id
+           JOIN events e ON g.event_id = e.id
+           WHERE en.id = ?""",
+        (end_id,),
+    )
+    return cur.fetchone()
 
 
 def _fetch_shots_for_end(conn: sqlite3.Connection, end_id: int) -> list[tuple[int, int, str]]:
@@ -258,7 +269,16 @@ def label_end(conn: sqlite3.Connection, end_id: int) -> int:
     Returns:
         int: 更新したストーン行数。
     """
-    color_hammer = _fetch_color_hammer(conn, end_id)
+    meta = _fetch_end_metadata(conn, end_id)
+    if meta is None:
+        logger.warning(f"end_id={end_id} not found; skipping.")
+        return 0
+    event_name, team_red, team_yellow, end_number, color_hammer = meta
+    # 対戦カードはチーム名コード部分のみ（例: "CAN - Canada" -> "CAN"）に短縮してログを見やすくする
+    red = (team_red or "?").split(" - ")[0]
+    yellow = (team_yellow or "?").split(" - ")[0]
+    log_context = f"[{event_name} | {red} vs {yellow} | End {end_number} (end_id={end_id})] "
+
     shots = _fetch_shots_for_end(conn, end_id)
 
     cur = conn.cursor()
@@ -267,7 +287,8 @@ def label_end(conn: sqlite3.Connection, end_id: int) -> int:
     for shot_id, number, _color in shots:
         current_stones = _fetch_stones(conn, shot_id)
         active_stones, _exited = match_sequential(
-            active_stones, current_stones, number, color_hammer=color_hammer,
+            active_stones, current_stones, number,
+            color_hammer=color_hammer, log_context=log_context,
         )
         # 今回の局面に存在する各ストーンに、確定したラベルを書き込む
         for s in current_stones:
@@ -276,6 +297,7 @@ def label_end(conn: sqlite3.Connection, end_id: int) -> int:
                 (s['label'], s['db_id']),
             )
             updated += 1
+    logger.info(f"{log_context}{len(shots)} shots, {updated} stones labeled.")
     return updated
 
 
