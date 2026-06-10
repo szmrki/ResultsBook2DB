@@ -483,3 +483,43 @@ def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
             })
 
     return results
+
+
+def extract_year_and_category(game: str, is_md: bool) -> tuple[int | None, str | None]:
+    """
+    大会名文字列から西暦とカテゴリを抽出する。
+
+    Args:
+        game: 大会名文字列（例: "WWCC2024"）
+        is_md: 混合ダブルス（MD）かどうか
+
+    Returns:
+        (year, category) のタプル。取得できない場合は None。
+    """
+    # 大会名(game)から西暦(year)を抽出
+    year_match = re.search(r'\d{4}', game)
+    year = int(year_match.group()) if year_match else None
+
+    # カテゴリの特定
+    category = None
+    if is_md:
+        category = "MD"
+    else:
+        if "WJCC" in game:
+            if "Women" in game:
+                category = "Junior Women"
+            elif "Men" in game:
+                category = "Junior Men"
+        else:
+            if "Women" in game:
+                category = "Women"
+            elif "Men" in game:
+                category = "Men"
+            else:
+                if "WMCC" in game:
+                    category = "Men"
+                elif "WWCC" in game:
+                    category = "Women"
+                else:
+                    category = None
+    return year, category
