@@ -310,6 +310,7 @@ def label_event_ends(
     conn: sqlite3.Connection,
     event_id: int,
     progress_cb: Callable[[int, int], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> int:
     """
     1イベント（大会）配下の全エンドを同定する。worker からの呼び出し用。
@@ -319,9 +320,12 @@ def label_event_ends(
         event_id: 対象イベントのID。
         progress_cb: 進捗通知用コールバック。1エンド処理するたびに (done, total) で呼ばれる。
             None の場合は通知しない（同定結果・挙動には影響しない）。
+        should_stop: 中断要求を判定するコールバック。各エンドの処理前に呼ばれ、True を返すと
+            その時点で打ち切る。None の場合は中断しない。打ち切られた場合、それまでの UPDATE は
+            コミットされていないため、呼び出し側でロールバックすれば全て破棄される。
 
     Returns:
-        int: 更新したストーン行数の合計。
+        int: 更新したストーン行数の合計（打ち切られた場合は途中までの合計）。
     """
     ensure_shot_order_column(conn)
     cur = conn.cursor()
@@ -337,6 +341,10 @@ def label_event_ends(
     total = 0
     n_ends = len(end_ids)
     for i, end_id in enumerate(end_ids, start=1):
+        # 中断要求があればその時点で打ち切る（呼び出し側がロールバックする前提）
+        if should_stop is not None and should_stop():
+            logger.info(f"Stone matching interrupted at end {i}/{n_ends} (event_id={event_id}).")
+            break
         # 1エンドの同定失敗で大会全体を巻き込まないよう、エンド単位で保護する
         try:
             total += label_end(conn, end_id)
