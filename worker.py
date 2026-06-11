@@ -13,6 +13,7 @@ from pdf_tools import *
 from yolo_tools import *
 from utils import *
 from detection import *
+from stone_matching import ensure_shot_order_column, label_event_ends
 import sys
 from itertools import zip_longest
 import io
@@ -68,10 +69,12 @@ class Worker(QThread):
             
             cur_init = self.conn.cursor()
             cur_init.execute('''CREATE TABLE IF NOT EXISTS lsds (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL, 
+                id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL,
                 team STRING, player_name STRING, distance_cm FLOAT,
                 FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
             )
+            # 既存DB向け: stones.shot_order カラムが無ければ追加
+            ensure_shot_order_column(self.conn)
             self.conn.commit()
             
             start_time_all = time.time()
@@ -348,11 +351,30 @@ class Worker(QThread):
                 else:
                     continue
         doc.close()
-        # 中断されていた場合はコミットせず、run側のロールバックに委ねる
-        if not self.isInterruptionRequested():
-            self.conn.commit()  # 1ファイル処理完了毎にコミット
-            elapsed_det = time.time() - start_time_det
-            logger.info(f"[{game}] Detection complete (took {elapsed_det:.2f}s).")
+        # 検出途中で中断された場合はコミットせず、run側のロールバックに委ねる（大会ごと破棄）
+        if self.isInterruptionRequested():
+            return True
+        elapsed_det = time.time() - start_time_det
+        logger.info(f"[{game}] Detection complete (took {elapsed_det:.2f}s).")
+        # ストーン同定: この大会の全エンドについて各石の投球元(shot_order)を特定する
+        self.progress_signal.emit(0, f"{prefix}Matching stones...")
+        start_time_match = time.time()
+        updated = label_event_ends(
+            self.conn, event_id,
+            progress_cb=lambda done, total: self.progress_signal.emit(
+                int(done / total * 100) if total else 100,
+                f"{prefix}Matching stones... ({done}/{total})"
+            ),
+            should_stop=self.isInterruptionRequested,  # 同定中も中止を受け付けて打ち切る
+        )
+        # 同定中に中断された場合も、検出結果ごとコミットせず run側のロールバックに委ねる。
+        # 検出+同定が揃って初めて1大会としてコミットすることで、shot_order=NULL の
+        # 中途半端な状態を残さず「大会ごと破棄」に一本化する。
+        if self.isInterruptionRequested():
+            return True
+        logger.info(f"[{game}] Stone matching complete: {updated} stones labeled "
+                    f"(took {time.time() - start_time_match:.2f}s).")
+        self.conn.commit()  # 検出結果と同定結果をまとめてコミット
         return True
 
     def _prepare_model(self, game: str, doc, prefix: str) -> "YOLO":
