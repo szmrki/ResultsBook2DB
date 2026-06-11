@@ -319,27 +319,26 @@ def __extract_images(doc: fitz.Document, page: fitz.Page) -> tuple[list[dict[str
     bboxes = []    #画像補完用
     # ページ内の画像情報を取得
     for img in tmp_shotbyshot_list:
-        # 画像のページ上の座標を取得
-        bbox = page.get_image_bbox(img)
-        x0, y0, x1, y1 = bbox  # 左上(x0,y0)と右下(x1,y1)
-        
-        #print(f"bbox={bbox}, x0={x0}, y0={y0}, x1={x1}, y1={y1}")
-        bboxes.append(bbox)
-        
-        #画像に変換する
         xref = img[0]
-        pix = fitz.Pixmap(doc, xref)
-        img = __pixmap2cv2(pix)
-        is_negated = __black_more_than_white(img)
-        if is_negated:
-            img = 255 - img  #反転
 
-        shotbyshot_list.append({
-            "img": img,
-            "x": x0,
-            "y": y0,
-            "is_negated": is_negated,
-        })
+        # 画像の中身（pixmap）は同一xrefの全配置で共通なので一度だけデコードする
+        pix = fitz.Pixmap(doc, xref)
+        img_cv = __pixmap2cv2(pix)
+        is_negated = __black_more_than_white(img_cv)
+        if is_negated:
+            img_cv = 255 - img_cv  #反転
+
+        # 元PDFが同一画像を複数箇所に配置している（盤面が同一のショットで重複排除される）場合、
+        # get_image_bbox は1配置しか返さず取りこぼす。get_image_rects で全配置を取得する。
+        for bbox in page.get_image_rects(xref):
+            x0, y0 = bbox.x0, bbox.y0  # 画像左上の座標
+            bboxes.append(bbox)
+            shotbyshot_list.append({
+                "img": img_cv.copy(),  # 配置ごとに独立した配列を持たせる
+                "x": x0,
+                "y": y0,
+                "is_negated": is_negated,
+            })
     return shotbyshot_list, bboxes
 
 # 数値に変換できるものは int、できないものはそのまま
