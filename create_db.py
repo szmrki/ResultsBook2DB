@@ -45,6 +45,8 @@ def set_tables(dbname: str | Path, is_md: bool = False) -> None:
             x FLOAT, y FLOAT, distance_from_center FLOAT, inhouse INTEGER, insheet INTEGER, shot_order INTEGER,
             FOREIGN KEY(shot_id) REFERENCES shots(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
         )
+        # ストーンマッチングは shot_id での絞り込みを多数回実行するため、インデックスを張る
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_stones_shot_id ON stones(shot_id)")
         cur.execute(
             '''CREATE TABLE lsds (id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL,
             team STRING, player_name STRING, distance_cm FLOAT,

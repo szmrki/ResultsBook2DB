@@ -195,6 +195,11 @@ def ensure_shot_order_column(conn: sqlite3.Connection) -> None:
         conn.commit()
         logger.info("Added 'shot_order' column to stones table.")
 
+    # ストーンマッチングは shot_id での絞り込みを多数回実行するため、インデックスを張る
+    # （既存DBにも冪等に適用する。IF NOT EXISTS なので二重実行しても安全）
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_stones_shot_id ON stones(shot_id)")
+    conn.commit()
+
 
 def _fetch_end_metadata(
     conn: sqlite3.Connection, end_id: int
