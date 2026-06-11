@@ -22,7 +22,7 @@ DBに保存された各ショット後のストーン座標を用いて、
 """
 import sqlite3
 import logging
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -301,13 +301,19 @@ def label_end(conn: sqlite3.Connection, end_id: int) -> int:
     return updated
 
 
-def label_event_ends(conn: sqlite3.Connection, event_id: int) -> int:
+def label_event_ends(
+    conn: sqlite3.Connection,
+    event_id: int,
+    progress_cb: Callable[[int, int], None] | None = None,
+) -> int:
     """
     1イベント（大会）配下の全エンドを同定する。worker からの呼び出し用。
 
     Args:
         conn: SQLite 接続。
         event_id: 対象イベントのID。
+        progress_cb: 進捗通知用コールバック。1エンド処理するたびに (done, total) で呼ばれる。
+            None の場合は通知しない（同定結果・挙動には影響しない）。
 
     Returns:
         int: 更新したストーン行数の合計。
@@ -324,12 +330,15 @@ def label_event_ends(conn: sqlite3.Connection, event_id: int) -> int:
     end_ids = [row[0] for row in cur.fetchall()]
 
     total = 0
-    for end_id in end_ids:
+    n_ends = len(end_ids)
+    for i, end_id in enumerate(end_ids, start=1):
         # 1エンドの同定失敗で大会全体を巻き込まないよう、エンド単位で保護する
         try:
             total += label_end(conn, end_id)
         except Exception:
             logger.exception(f"Stone matching failed for end_id={end_id}")
+        if progress_cb is not None:
+            progress_cb(i, n_ends)
     return total
 
 

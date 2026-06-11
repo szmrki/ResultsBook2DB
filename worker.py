@@ -356,9 +356,15 @@ class Worker(QThread):
             elapsed_det = time.time() - start_time_det
             logger.info(f"[{game}] Detection complete (took {elapsed_det:.2f}s).")
             # ストーン同定: この大会の全エンドについて各石の投球元(shot_order)を特定する
-            self.progress_signal.emit(100, f"{prefix}Matching stones...")
+            self.progress_signal.emit(0, f"{prefix}Matching stones...")
             start_time_match = time.time()
-            updated = label_event_ends(self.conn, event_id)
+            updated = label_event_ends(
+                self.conn, event_id,
+                progress_cb=lambda done, total: self.progress_signal.emit(
+                    int(done / total * 100) if total else 100,
+                    f"{prefix}Matching stones... ({done}/{total})"
+                ),
+            )
             logger.info(f"[{game}] Stone matching complete: {updated} stones labeled "
                         f"(took {time.time() - start_time_match:.2f}s).")
             self.conn.commit()  # 検出結果と同定結果をまとめてコミット
