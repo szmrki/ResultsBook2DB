@@ -1,5 +1,5 @@
 """
-stone_matching.py: ストーン同定（投球元の特定）モジュール
+stone_matching.py: ストーン同定 (投球元の特定) モジュール
 
 DBに保存された各ショット後のストーン座標を用いて、
 「盤面にある各ストーンが、そのエンドの何投目に投げられたものか」を同定する。
@@ -8,17 +8,17 @@ DBに保存された各ショット後のストーン座標を用いて、
     あるエンドはショット1→2→…と進み、ショットごとに「その時点の盤面に
     存在するストーン座標」が記録されている。隣り合うショット間で
     「前の局面のどのストーンが、今の局面のどのストーンに対応するか」を
-    二部マッチング（線形割当問題, scipy の linear_sum_assignment）で解く。
+    二部マッチング (線形割当問題, scipy の linear_sum_assignment) で解く。
     どの既存ストーンにも対応しなかった新しいストーン = 今まさに投げられた石、
     と判定し、そのショット番号(shot_order)を割り当てる。
 
 同定結果は stones テーブルの shot_order カラムに書き戻す。
-    - 正の値(1〜16): 何投目に投げられたか（= shots.number と同じドメイン）
-    - 負の値        : ハンマールール等の制約に反した要確認のケース（-shot_num）
-    - NULL          : 座標が無い行（x/y が NULL のプレースホルダ行）は対象外
+    - 正の値(1〜16): 何投目に投げられたか (= shots.number と同じドメイン)
+    - 負の値        : ハンマールール等の制約に反した要確認のケース (-shot_num)
+    - NULL          : 座標が無い行 (x/y が NULL のプレースホルダ行) は対象外
 
 注意: shot_order は「その石を投げたショット」の番号であり、
-      stones.shot_id（その石が写っている盤面の所属ショット）とは別のショットを指す。
+      stones.shot_id (その石が写っている盤面の所属ショット) とは別のショットを指す。
 """
 import sqlite3
 import logging
@@ -29,7 +29,7 @@ from scipy.optimize import linear_sum_assignment
 
 logger = logging.getLogger(__name__)
 
-# --- マッチングの閾値（DigitalCurling3 座標系, 単位: m） ---
+# --- マッチングの閾値 (DigitalCurling3 座標系, 単位: m)  ---
 EXIT_THRESHOLD = 2.0       # 既存ストーンが盤面から退出したとみなすコスト
 ARRIVAL_THRESHOLD = 1.5    # 新しいストーンが新規参入（シューター）とみなすコスト
 DIRECTION_TOLERANCE = 0.07  # y方向の逆走を許容する量（これ以内なら逆走とみなさない）
@@ -53,7 +53,7 @@ def match_sequential(
         active_stones: 直前の局面で盤面にあったストーンのリスト。
             各要素は {'color': str, 'pos': (x, y), 'label': int | None, ...} の辞書。
         current_stones: 今回のショット後の盤面にあるストーンのリスト（同じ形式）。
-        shot_num: 今回のショット番号（エンド内の投球順, 1〜16）。
+        shot_num: 今回のショット番号 (エンド内の投球順, 1〜16)。
         color_hammer: このエンドのハンマー（後攻）の色 'red' or 'yellow'。None なら色制約を使わない。
         exit_threshold: 既存ストーン退出のコスト。
         arrival_threshold: 新規参入（シューター）のコスト。
@@ -174,7 +174,7 @@ def match_sequential(
 
 def ensure_shot_order_column(conn: sqlite3.Connection) -> None:
     """
-    stones テーブルに shot_order カラムが無ければ追加する（既存DB向けマイグレーション）。
+    stones テーブルに shot_order カラムが無ければ追加する (既存DB向けマイグレーション)。
 
     Args:
         conn: SQLite 接続。
@@ -263,13 +263,19 @@ def _fetch_stones(conn: sqlite3.Connection, shot_id: int) -> list[dict[str, Any]
     return [{'db_id': r[0], 'color': r[1], 'pos': (r[2], r[3]), 'label': None} for r in rows]
 
 
-def label_end(conn: sqlite3.Connection, end_id: int) -> int:
+def label_end(
+    conn: sqlite3.Connection,
+    end_id: int,
+    initial_stones: list[dict[str, Any]] | None = None,
+) -> int:
     """
     1エンド分のストーンを同定し、stones.shot_order を更新する。
 
     Args:
         conn: SQLite 接続。
         end_id: 対象エンドのID。
+        initial_stones: MD版の Prepositioned stone (label=0 付き) を初期 active_stones として
+            セットする場合に指定する。None の場合は空リストから開始する (4人制の通常動作)。
 
     Returns:
         int: 更新したストーン行数。
@@ -279,7 +285,7 @@ def label_end(conn: sqlite3.Connection, end_id: int) -> int:
         logger.warning(f"end_id={end_id} not found; skipping.")
         return 0
     event_name, team_red, team_yellow, end_number, color_hammer = meta
-    # 対戦カードはチーム名コード部分のみ（例: "CAN - Canada" -> "CAN"）に短縮してログを見やすくする
+    # 対戦カードはチーム名コード部分のみ (例: "CAN - Canada" -> "CAN") に短縮してログを見やすくする
     red = (team_red or "?").split(" - ")[0]
     yellow = (team_yellow or "?").split(" - ")[0]
     log_context = f"[{event_name} | {red} vs {yellow} | End {end_number} (end_id={end_id})] "
@@ -287,7 +293,8 @@ def label_end(conn: sqlite3.Connection, end_id: int) -> int:
     shots = _fetch_shots_for_end(conn, end_id)
 
     cur = conn.cursor()
-    active_stones: list[dict[str, Any]] = []
+    # MD版: Prepositioned stoneがある場合は初期active_stonesとしてセットする
+    active_stones: list[dict[str, Any]] = initial_stones if initial_stones is not None else []
     updated = 0
     for shot_id, number, _color in shots:
         current_stones = _fetch_stones(conn, shot_id)
@@ -311,9 +318,10 @@ def label_event_ends(
     event_id: int,
     progress_cb: Callable[[int, int], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    prepositioned_map: dict[int, list[dict[str, Any]] | None] | None = None,
 ) -> int:
     """
-    1イベント（大会）配下の全エンドを同定する。worker からの呼び出し用。
+    1イベント (大会) 配下の全エンドを同定する。worker からの呼び出し用。
 
     Args:
         conn: SQLite 接続。
@@ -323,6 +331,9 @@ def label_event_ends(
         should_stop: 中断要求を判定するコールバック。各エンドの処理前に呼ばれ、True を返すと
             その時点で打ち切る。None の場合は中断しない。打ち切られた場合、それまでの UPDATE は
             コミットされていないため、呼び出し側でロールバックすれば全て破棄される。
+        prepositioned_map: MD版で end_id → Prepositioned stone (label=0 付き辞書リスト) の
+            マッピング。値が None のエンドは置石検出不可のためストーンマッチングをスキップする
+            (shot_order は全て NULL のまま)。マップ自体が None なら4人制として全エンド処理。
 
     Returns:
         int: 更新したストーン行数の合計（打ち切られた場合は途中までの合計）。
@@ -341,13 +352,28 @@ def label_event_ends(
     total = 0
     n_ends = len(end_ids)
     for i, end_id in enumerate(end_ids, start=1):
-        # 中断要求があればその時点で打ち切る（呼び出し側がロールバックする前提）
+        # 中断要求があればその時点で打ち切る (呼び出し側がロールバックする前提)
         if should_stop is not None and should_stop():
             logger.info(f"Stone matching interrupted at end {i}/{n_ends} (event_id={event_id}).")
             break
+
+        # prepositioned_map によるMDエンドのスキップ / 初期stone決定
+        initial_stones = None
+        if prepositioned_map is not None and end_id in prepositioned_map:
+            initial_stones = prepositioned_map[end_id]
+            if initial_stones is None:
+                # MD版でPrepositioned stone未検出 → shot_orderはNULLのままスキップ
+                logger.info(
+                    f"end_id={end_id}: MD end without prepositioned stones, "
+                    f"skipping stone matching."
+                )
+                if progress_cb is not None:
+                    progress_cb(i, n_ends)
+                continue
+
         # 1エンドの同定失敗で大会全体を巻き込まないよう、エンド単位で保護する
         try:
-            total += label_end(conn, end_id)
+            total += label_end(conn, end_id, initial_stones=initial_stones)
         except Exception:
             logger.exception(f"Stone matching failed for end_id={end_id}")
         if progress_cb is not None:
@@ -357,11 +383,11 @@ def label_event_ends(
 
 def label_database(conn: sqlite3.Connection, only_unlabeled: bool = False) -> int:
     """
-    DB内の全エンドを同定する。バックフィル（既存DBの一括更新）用。
+    DB内の全エンドを同定する。バックフィル (既存DBの一括更新) 用。
 
     Args:
         conn: SQLite 接続。
-        only_unlabeled: True の場合、未ラベル（shot_order が全て NULL）のエンドのみ対象。
+        only_unlabeled: True の場合、未ラベル (shot_order が全て NULL) のエンドのみ対象。
 
     Returns:
         int: 更新したストーン行数の合計。

@@ -45,7 +45,7 @@ class Worker(QThread):
 
     def run(self) -> None:
         """
-            別スレッドで実行される処理（複数PDF対応）
+            別スレッドで実行される処理 (複数PDF対応)
         """
         # --- 偽の出力先を作成 ---
         if sys.stdout is None:
@@ -88,7 +88,7 @@ class Worker(QThread):
                 # 現在処理中インデックスをUIに通知
                 self.file_index_signal.emit(i - 1)  # 0始まりに変換
 
-                # 解析中にファイルが追加された場合も分母を現在の総数に合わせる（[2/2] のように表示）
+                # 解析中にファイルが追加された場合も分母を現在の総数に合わせる ([2/2] のように表示)
                 total = max(len(self.pdf_entries), i)
                 pdf_path = str(entry["path"])
                 tournament_name = entry["event_name"]
@@ -107,7 +107,7 @@ class Worker(QThread):
                     errors.append(f"{entry['path'].name}: {e}")
                     logger.error(error_msg)
             
-            # 中断された場合（処理中ファイルの未コミット分をロールバック）
+            # 中断された場合 (処理中ファイルの未コミット分をロールバック)
             if self.isInterruptionRequested():
                 self.conn.rollback()
                 self.conn.close()
@@ -195,7 +195,7 @@ class Worker(QThread):
             Args:
                 pdf_path (str): PDFファイルのパス
                 tournament_name (str): 大会名
-                prefix (str): 進捗メッセージの接頭辞（例: "[1/3] "）
+                prefix (str): 進捗メッセージの接頭辞 (例: "[1/3] ")
 
             Returns:
                 bool : 処理が成功したらTrue、失敗したらFalse
@@ -219,10 +219,12 @@ class Worker(QThread):
 
         model = self._prepare_model(game, doc, prefix)
 
+        # MD版: Prepositioned stoneの座標を end_id → list[dict] のマップで蓄積する
+        prepositioned_map: dict[int, list[dict[str, Any]] | None] = {}
         start_time_det = time.time()
         with pdfplumber.open(pdf_path) as pdf:
             for pn in range(doc.page_count):
-                # 中断チェック（ページごとのループ先頭）
+                # 中断チェック (ページごとのループ先頭)
                 if self.isInterruptionRequested():
                     break
                 self.progress_signal.emit(int(pn/doc.page_count*100), f"{prefix}Extracting data...")
@@ -267,8 +269,8 @@ class Worker(QThread):
                             if lsd["player_yellow"] and lsd["lsd_yellow"] is not None:
                                 cur.execute("INSERT INTO lsds (game_id, team, player_name, distance_cm) VALUES (?, ?, ?, ?)",
                                             (game_id, team_yellow, lsd["player_yellow"], lsd["lsd_yellow"]))
-                    # ---------------------------
 
+                    # ---------------------------
                     # ここでエンドテーブルに情報を一括挿入
                     ends_data = []
                     for i in range(len(hammers)):
@@ -313,8 +315,25 @@ class Worker(QThread):
                                 (game_id, num_end))
                     end_id = cur.fetchone()[0]
                     
-                    stones_end, shot_info = extract_shotbyshot(doc, page_mu, model, self.is_md)
+                    stones_end, shot_info, pre_stones_np = extract_shotbyshot(doc, page_mu, model, self.is_md)
                     logger.info(f"[{game_context}] End {num_end} - Shot-by-Shot page: {page_num} - Number of shots: {max(len(stones_end), len(shot_info))}")
+
+                    # MD版: Prepositioned stone座標をマッチング用の辞書形式に変換して蓄積
+                    if self.is_md:
+                        if pre_stones_np is not None:
+                            pre_stone_dicts: list[dict[str, Any]] = []
+                            for row in pre_stones_np:
+                                if row[5] == 1:  # insheet フラグが立っている行のみ
+                                    pre_stone_dicts.append({
+                                        'color': num2color[int(row[0])],
+                                        'pos': (float(row[1]), float(row[2])),
+                                        'label': 0,  # Prepositioned stone は shot_order=0
+                                    })
+                            # 有効なストーンが取れた場合のみマップに登録、取れなかった場合はNone
+                            prepositioned_map[end_id] = pre_stone_dicts if pre_stone_dicts else None
+                        else:
+                            # MD版だがPrepositioned stone画像がなかった → スキップ対象
+                            prepositioned_map[end_id] = None
 
                     for shot_num, (stones, info) in enumerate(zip_longest(stones_end, shot_info), start=1):
                         if info is not None: #正常時
@@ -351,7 +370,7 @@ class Worker(QThread):
                 else:
                     continue
         doc.close()
-        # 検出途中で中断された場合はコミットせず、run側のロールバックに委ねる（大会ごと破棄）
+        # 検出途中で中断された場合はコミットせず、run側のロールバックに委ねる (大会ごと破棄)
         if self.isInterruptionRequested():
             return True
         elapsed_det = time.time() - start_time_det
@@ -366,6 +385,7 @@ class Worker(QThread):
                 f"{prefix}Matching stones... ({done}/{total})"
             ),
             should_stop=self.isInterruptionRequested,  # 同定中も中止を受け付けて打ち切る
+            prepositioned_map=prepositioned_map if self.is_md else None,
         )
         # 同定中に中断された場合も、検出結果ごとコミットせず run側のロールバックに委ねる。
         # 検出+同定が揃って初めて1大会としてコミットすることで、shot_order=NULL の

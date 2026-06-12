@@ -17,7 +17,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model: YOLO, is_md: bool = False) -> tuple[np.ndarray, 
-                                                list[dict[str, str | int | None]]]:
+                                                list[dict[str, str | int | None]],
+                                                np.ndarray | None]:
     """
         ページからショットバイショット画像を抽出するメソッド
         Args:
@@ -26,8 +27,10 @@ def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model: YOLO, is_md: 
             model : ストーン検出モデル
             is_md : MD or 4人制
     Returns:
-        tuple[np.ndarray, list[dict[str, str | int | None]]]: 
-            ストーン座標の配列（num_shots x 16 x 6）とショット情報のリスト
+        tuple[np.ndarray, list[dict[str, str | int | None]], np.ndarray | None]: 
+            ストーン座標の配列（num_shots x 16 x 6）、ショット情報のリスト、
+            Prepositioned stoneの座標配列 ((16, 6))。
+            Prepositioned stoneが存在しない場合は None。
     """
     text = page.get_text()
     text = text.splitlines()
@@ -73,15 +76,21 @@ def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model: YOLO, is_md: 
     # 上→下、左→右でソート(投球順に合わせる)
     shotbyshot_list.sort(key=lambda im: (im["y"], im["x"]))
 
+    # MD版: Prepositioned stone画像を取り出してYOLO推論し、座標を取得する
+    pre_stones = None
     if is_md and "prepositioned stones" in [t.lower() for t in text]:
-        del shotbyshot_list[0]  #先頭画像を削除
+        pre_entry = shotbyshot_list.pop(0)  # 先頭画像を取り出す (削除ではなく座標抽出用)
+        pre_result = get_stones_pos(
+            [pre_entry["img"]], model, [pre_entry.get("is_negated", False)]
+        )
+        pre_stones = pre_result[0]  # (16, 6) の numpy配列
             
     imgs = [entry["img"] for entry in shotbyshot_list]
     is_negated_list = [entry.get("is_negated", False) for entry in shotbyshot_list]
     stones_end_list = get_stones_pos(imgs, model, is_negated_list)
     stones_end = np.array(stones_end_list)  #(num_shots, 16, 6)
 
-    return stones_end, shot_info_list
+    return stones_end, shot_info_list, pre_stones
 
 def extract_game_result(page: pdfplumber.page.Page, is_md: bool = False) -> pd.DataFrame | tuple[pd.DataFrame, list[int]]:
     """
@@ -130,7 +139,7 @@ def extract_game_result(page: pdfplumber.page.Page, is_md: bool = False) -> pd.D
             break
 
     # フォールバック: '*' が検出されなかった場合
-    # （pdfplumberがLSFE列を認識できないPDFでは、得点表から '*' 列ごと欠落する）
+    # (pdfplumberがLSFE列を認識できないPDFでは、得点表から '*' 列ごと欠落する)
     if table is None:
         for t in tabs:
             extracted = t.extract()
@@ -188,8 +197,8 @@ def __extract_lsfe_from_text(text: str, team_red: str | None, team_yellow: str |
         for line in text.split('\n'):
             if team in line:
                 after = line.split(team, 1)[1]
-                # team名が途中で切れている場合（例: "USA - United" と抽出され、本来は
-                # "USA - United States of America"）に備え、スコア開始位置まで読み進める
+                # team名が途中で切れている場合 (例: "USA - United" と抽出され、本来は
+                # "USA - United States of America") に備え、スコア開始位置まで読み進める
                 for tok in after.split():
                     if tok == '*':
                         return '*'
@@ -216,7 +225,7 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
     shots = []
     i = 0
     while i < len(all_texts) - 2:
-        # --- パターン A：回転あり（4要素） ---
+        # --- パターン A：回転あり (4要素) ---
         if i <= len(all_texts) - 4:
             type, score, turn, player = all_texts[i:i+4]
 
@@ -240,7 +249,7 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
                 i += 4
                 continue
 
-        # --- パターン B：回転なし（3要素） ---
+        # --- パターン B：回転なし (3要素) ---
         type, score, player = all_texts[i:i+3]
         if score_pattern.match(score) and player_pattern.match(player):
             team, player = player.split(": ")
@@ -302,7 +311,7 @@ def __extract_images(doc: fitz.Document, page: fitz.Page) -> tuple[list[dict[str
                     "y": 画像左上のy座標
             bboxes : 各画像のbboxの座標をまとめたリスト
     """
-    # ページ内の全画像情報を取得（整数の XREF）
+    # ページ内の全画像情報を取得 (整数の XREF)
     img_list = page.get_images(full=True)
     #print("img_list: ", img_list)
 
@@ -328,7 +337,7 @@ def __extract_images(doc: fitz.Document, page: fitz.Page) -> tuple[list[dict[str
         if is_negated:
             img_cv = 255 - img_cv  #反転
 
-        # 元PDFが同一画像を複数箇所に配置している（盤面が同一のショットで重複排除される）場合、
+        # 元PDFが同一画像を複数箇所に配置している (盤面が同一のショットで重複排除される) 場合、
         # get_image_bbox は1配置しか返さず取りこぼす。get_image_rects で全配置を取得する。
         for bbox in page.get_image_rects(xref):
             x0, y0 = bbox.x0, bbox.y0  # 画像左上の座標
@@ -379,7 +388,7 @@ def __found_missing_bbox(bboxes: list[fitz.Rect]) -> list[fitz.Rect]:
     missing = expected - actual
     logger.info(f"欠落している画像位置: {missing}")
 
-    # 幅・高さの推定（最も安定）
+    # 幅・高さの推定 (最も安定)
     # 同じ行の既存画像と比較する
     missings = []
     for mx, my in missing:
@@ -391,7 +400,7 @@ def __found_missing_bbox(bboxes: list[fitz.Rect]) -> list[fitz.Rect]:
             width = same_row[0].width
             height = same_row[0].height
         else:
-            # fallback（近い行の画像サイズ）
+            # fallback (近い行の画像サイズ)
             width = bboxes[0].width
             height = bboxes[0].height
         missing_bbox = fitz.Rect(mx, my, mx + width, my + height)
@@ -489,7 +498,7 @@ def extract_year_and_category(game: str, is_md: bool) -> tuple[int | None, str |
     大会名文字列から西暦とカテゴリを抽出する。
 
     Args:
-        game: 大会名文字列（例: "WWCC2024"）
+        game: 大会名文字列 (例: "WWCC2024")
         is_md: 混合ダブルス（MD）かどうか
 
     Returns:
