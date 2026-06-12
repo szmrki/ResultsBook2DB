@@ -28,7 +28,7 @@ def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model: YOLO, is_md: 
             is_md : MD or 4人制
     Returns:
         tuple[np.ndarray, list[dict[str, str | int | None]], np.ndarray | None]: 
-            ストーン座標の配列（num_shots x 16 x 6）、ショット情報のリスト、
+            ストーン座標の配列 (num_shots x 16 x 6) 、ショット情報のリスト、
             Prepositioned stoneの座標配列 ((16, 6))。
             Prepositioned stoneが存在しない場合は None。
     """
