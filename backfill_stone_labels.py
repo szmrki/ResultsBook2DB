@@ -33,6 +33,27 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 logger = logging.getLogger(__name__)
 
 
+def is_md_database(conn: sqlite3.Connection) -> bool:
+    """DBがMD ( 混合ダブルス ) 用かどうかを判定する。
+
+    MD用DBは ends テーブルに is_power_play 列を持つ ( create_db.set_tables を参照 ) ため、
+    その列の有無で判別する。MDのストーン同定には Prepositioned stone の座標が必要だが、
+    その座標はDBに永続化されていない ( worker 実行時にYOLO推論で得てメモリ上で使うだけ ) ため、
+    バックフィルでは正しいMDマッチングを再構成できない。よってMD DBは処理対象から弾く。
+
+    Args:
+        conn: SQLite 接続。
+
+    Returns:
+        bool: ends テーブルに is_power_play 列があれば True ( = MD用DB )。
+    """
+    cur = conn.cursor()
+    # PRAGMA table_info は (cid, name, type, notnull, dflt_value, pk) のタプルを返す
+    cur.execute("PRAGMA table_info(ends)")
+    columns = {row[1] for row in cur.fetchall()}
+    return "is_power_play" in columns
+
+
 def backfill_one(db_path: Path, only_unlabeled: bool) -> int:
     """単一のDBファイルにストーン同定を適用する。
 
@@ -41,12 +62,19 @@ def backfill_one(db_path: Path, only_unlabeled: bool) -> int:
         only_unlabeled: True なら未ラベルのエンドのみ処理する。
 
     Returns:
-        int: 更新したストーン行数。
+        int: 更新したストーン行数。MD用DBはスキップし 0 を返す。
     """
     # 外部キー制約を有効化して接続（既存の運用と揃える）
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA foreign_keys = ON;")
     try:
+        # MD用DBはバックフィルで正しく同定できないためスキップする ( 誤った shot_order の書き込みを防ぐ )
+        if is_md_database(conn):
+            logger.warning(
+                f"  -> {db_path.name} は MD ( 混合ダブルス ) 用DBのため、バックフィルをスキップします "
+                f"( Prepositioned stone 座標がDBに無く正しく同定できないため )。"
+            )
+            return 0
         # label_database 内で shot_order カラムの存在保証とコミットまで行われる
         updated = label_database(conn, only_unlabeled=only_unlabeled)
         return updated
