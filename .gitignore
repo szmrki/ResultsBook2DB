@@ -20,11 +20,10 @@ pdf_convert.py
 myreadme.txt
 todo.txt
 Output/
-setup.iss
 logs/
 create_slides.py
 slides/
 docs/*
 !docs/flowchart.png
 scratch/
-CLAUDE.md
+CLAUDE.local.md
