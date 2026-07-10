@@ -13,7 +13,7 @@ from pdf_tools import *
 from yolo_tools import *
 from utils import *
 from detection import *
-from stone_matching import ensure_shot_order_column, label_event_ends
+from stone_matching import ensure_shot_order_column, label_event_ends, correct_equidistant_blank_hammer
 import sys
 from itertools import zip_longest
 import io
@@ -380,6 +380,13 @@ class Worker(QThread):
             return True
         elapsed_det = time.time() - start_time_det
         logger.info(f"[{game}] Detection complete (took {elapsed_det:.2f}s).")
+        # MD版: 同距離ブランクエンド ( ハウス内に両チームの石が残った膠着ブランク ) では
+        # 先攻後攻が交代しないため、get_hammer が入れた誤った交代を打ち消す。
+        # 同定は color_hammer を色制約に使うため、補正は同定より前に行う。
+        if self.is_md:
+            corrected = correct_equidistant_blank_hammer(self.conn, event_id)
+            if corrected:
+                logger.info(f"[{game}] Equidistant-blank hammer correction: {corrected} ends updated.")
         # ストーン同定: この大会の全エンドについて各石の投球元(shot_order)を特定する
         self.progress_signal.emit(0, f"{prefix}Matching stones...")
         start_time_match = time.time()

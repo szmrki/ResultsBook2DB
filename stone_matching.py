@@ -428,3 +428,172 @@ def _end_already_labeled(conn: sqlite3.Connection, end_id: int) -> bool:
         (end_id,),
     )
     return cur.fetchone() is not None
+
+
+# ---------------------------------------------------------------------------
+# MD版: 同距離ブランクエンドの先攻後攻 ( ハンマー ) 補正
+# ---------------------------------------------------------------------------
+# MD ( 混合ダブルス ) では、ブランクエンド ( 両者0点 ) の次のエンド以降は
+# 通常、先攻後攻が入れ替わる ( utils.get_hammer が一律で反転させている )。
+# しかし例外があり、「ブランクだが、ハウス内に両チームのストーンが残っていて
+# 完全に同距離だったため誰も得点しなかった」ケースでは先攻後攻が変わらない。
+#
+# get_hammer が呼ばれる時点ではまだ石座標が抽出されていないため、
+# 石座標 ( stones ) が出揃った後・同定 ( label_event_ends ) の直前に、
+# この関数で該当エンドを検出し、以降のエンドの color_hammer と
+# shots.color を補正する ( 同定は color_hammer を色制約に使うため、
+# 補正を同定より前に行うことで同定精度を保つ )。
+#
+# 「完全に同距離」は検出誤差の影響で厳密な距離一致では判定しづらいため、
+# 「ブランクかつ最終盤面で両チームのストーンが各1個以上ハウス内にある」を
+# 同距離ブランクの定義とする。
+
+
+def _is_equidistant_blank_end(conn: sqlite3.Connection, end_id: int) -> bool:
+    """あるエンドが「同距離ブランク」( 先攻後攻が変わらないブランク ) か判定する。
+
+    定義: そのエンドがブランク ( score_red = 0 かつ score_yellow = 0 ) であり、
+    かつ最終ショット後の盤面で red・yellow がそれぞれ1個以上ハウス内にある。
+
+    Args:
+        conn: SQLite 接続。
+        end_id: 対象エンドのID。
+
+    Returns:
+        bool: 同距離ブランクなら True。そうでなければ False。
+    """
+    cur = conn.cursor()
+
+    # 得点を取得し、ブランク ( 両者0点 ) 以外は対象外
+    cur.execute("SELECT score_red, score_yellow FROM ends WHERE id = ?", (end_id,))
+    row = cur.fetchone()
+    if row is None:
+        return False
+    score_red, score_yellow = row
+    if score_red != 0 or score_yellow != 0:
+        return False
+
+    # このエンドの最終ショット ( number 最大 ) の盤面を対象にする。
+    # stones はショット後ごとの盤面が記録されているため、最終ショットの
+    # 盤面 = そのエンドの最終局面となる。
+    cur.execute(
+        "SELECT id FROM shots WHERE end_id = ? ORDER BY number DESC LIMIT 1",
+        (end_id,),
+    )
+    last_shot = cur.fetchone()
+    if last_shot is None:
+        return False
+    last_shot_id = last_shot[0]
+
+    # 最終盤面のハウス内ストーンを色ごとに数える
+    cur.execute(
+        """SELECT color, COUNT(*) FROM stones
+           WHERE shot_id = ? AND inhouse = 1
+           GROUP BY color""",
+        (last_shot_id,),
+    )
+    counts = {color: cnt for color, cnt in cur.fetchall()}
+
+    # 両チームが各1個以上ハウス内にあるときのみ同距離ブランクとみなす
+    return counts.get("red", 0) >= 1 and counts.get("yellow", 0) >= 1
+
+
+def _flip_color(color: str | None) -> str | None:
+    """ストーン色 ( 'red' / 'yellow' ) を反転する。None はそのまま返す。
+
+    Args:
+        color: 'red' または 'yellow'、あるいは None。
+
+    Returns:
+        str | None: 反転後の色。color が None ならば None。
+    """
+    if color == "red":
+        return "yellow"
+    if color == "yellow":
+        return "red"
+    return color
+
+
+def correct_equidistant_blank_hammer(conn: sqlite3.Connection, event_id: int) -> int:
+    """MD版で同距離ブランクエンドを検出し、先攻後攻 ( ハンマー ) を補正する。
+
+    get_hammer はMDのブランクを一律「次のエンドで先攻後攻を交代」として扱うが、
+    同距離ブランク ( ハウス内に両チームの石が残った膠着ブランク ) では交代しないのが正しい。
+    この関数は石座標が出揃った後・同定の直前に呼ばれ、ブランクを含む試合のみを
+    number 順に走査して同距離ブランクを検出するたびに、その「次のエンド1つだけ」の
+    color_hammer と shots.color を反転させ、get_hammer が入れた誤った交代を打ち消す。
+
+    get_hammer は各エンドを独立に計算しており ( 得点エンドは自分のスコアで確定し、
+    ブランクエンドのみ 1 - 前エンド )、ブランクの影響が及ぶのは直後のエンド1つだけである。
+    そのため補正も次のエンドに限定してよく、それ以降のエンドには波及させない。
+
+    Args:
+        conn: SQLite 接続。
+        event_id: 対象イベント ( 大会 ) のID。
+
+    Returns:
+        int: 補正した ( ハンマーを反転させた ) エンド数の合計。
+    """
+    cur = conn.cursor()
+
+    # ブランクエンドを持つ試合IDを1本のクエリで取得する。
+    # これが空なら、この大会にはブランク自体が無いので補正対象なし → 即終了。
+    # ( 大会全体のブランク有無チェックと、調査対象の試合抽出を兼ねる )
+    cur.execute(
+        """SELECT DISTINCT g.id
+           FROM games g
+           JOIN ends en ON en.game_id = g.id
+           WHERE g.event_id = ?
+             AND en.score_red = 0 AND en.score_yellow = 0
+           ORDER BY g.id""",
+        (event_id,),
+    )
+    game_ids = [r[0] for r in cur.fetchall()]
+    if not game_ids:
+        return 0
+
+    corrected_ends = 0
+    for game_id in game_ids:
+        # ゲーム内の全エンドを number 順に取得
+        cur.execute(
+            "SELECT id, number FROM ends WHERE game_id = ? ORDER BY number",
+            (game_id,),
+        )
+        ends = cur.fetchall()
+
+        for idx, (end_id, number) in enumerate(ends):
+            # 同距離ブランクを見つけたら、その「次のエンド1つだけ」のハンマーを反転する。
+            # get_hammer は各エンドを独立に計算しており ( 得点エンドは自分のスコアで確定、
+            # ブランクエンドのみ 1 - 前エンド )、ブランクの影響が及ぶのは直後のエンド1つだけ。
+            # そのため補正も「同距離ブランクの次のエンド」に限定する。
+            # ( 次がまた同距離ブランクなら、そのブランク自身がさらに次を補正するので、
+            #   各ブランクが自分の次だけを見れば全体が正しく収束する )
+            if not _is_equidistant_blank_end(conn, end_id):
+                continue
+
+            # 次のエンドが存在しなければ ( 最終エンドが同距離ブランク ) 補正対象なし
+            if idx + 1 >= len(ends):
+                continue
+            next_end_id, next_number = ends[idx + 1]
+
+            # 次のエンドの color_hammer と配下の shots.color を反転する
+            cur.execute("SELECT color_hammer FROM ends WHERE id = ?", (next_end_id,))
+            ch = cur.fetchone()[0]
+            cur.execute(
+                "UPDATE ends SET color_hammer = ? WHERE id = ?",
+                (_flip_color(ch), next_end_id),
+            )
+            cur.execute("SELECT id, color FROM shots WHERE end_id = ?", (next_end_id,))
+            for shot_id, shot_color in cur.fetchall():
+                cur.execute(
+                    "UPDATE shots SET color = ? WHERE id = ?",
+                    (_flip_color(shot_color), shot_id),
+                )
+            corrected_ends += 1
+            logger.info(
+                f"Equidistant-blank end detected "
+                f"(game_id={game_id}, end_id={end_id}, number={number}): "
+                f"flipping hammer of next end (number={next_number})."
+            )
+
+    return corrected_ends
