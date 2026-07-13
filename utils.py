@@ -8,9 +8,6 @@ from typing import Any
 from pathlib import Path
 
 def get_hammer(scores: pd.DataFrame, is_md: bool = False) -> list[int | None]: 
-    if scores["LSFE"].isnull().all(): #LSFEがすべてNoneの場合
-        return [None]
-
     """
         スコア表ベースでエンドごとのハンマーのindexを取得する
         Args:
@@ -19,6 +16,10 @@ def get_hammer(scores: pd.DataFrame, is_md: bool = False) -> list[int | None]:
         Returns:
             list[int | None] : 0 or 1のリスト、長さはエンド数
     """
+
+    if scores["LSFE"].isnull().all(): #LSFEがすべてNoneの場合
+        return [None]
+    
     #LSFE列に*があるチームがラストストーンエンド
     hammer_list = []
     try:
@@ -56,6 +57,23 @@ def get_hammer(scores: pd.DataFrame, is_md: bool = False) -> list[int | None]:
             hammer_list.append(None)
 
     return hammer_list
+
+def to_team_code(team: str | None) -> str | None:
+    """
+        チーム名から3文字の国コードのみを取り出す
+        リザルトブック上のチーム名は "CAN - Canada" のように
+        「3文字コード + 空白 + ハイフン + 空白 + 国名」の形式になっている。
+        DB には3文字コードのみを保存して表記揺れ ( 国名部分が大会ごとに異なる ) を防ぐ。
+        Args:
+            team : チーム名 ( 例: 'CAN - Canada' )。None の場合はそのまま返す
+        Returns:
+            str | None : 3文字コード ( 例: 'CAN' )。team が None ならば None
+    """
+    if not team:
+        return team
+    # " - " で分割した先頭要素がコード部分。
+    # 万一ハイフンが無い ( 既に3文字化済み等 ) 場合も split の先頭は文字列全体になるため安全。
+    return team.split(" - ")[0].strip()
 
 def delete_files(dir: str | Path) -> None:
     """

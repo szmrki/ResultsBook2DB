@@ -13,7 +13,7 @@ from pdf_tools import *
 from yolo_tools import *
 from utils import *
 from detection import *
-from stone_matching import ensure_shot_order_column, label_event_ends
+from stone_matching import ensure_shot_order_column, label_event_ends, correct_equidistant_blank_hammer
 import sys
 from itertools import zip_longest
 import io
@@ -253,9 +253,14 @@ class Worker(QThread):
                         fin_red = None
                         fin_yellow = None
                     
-                    cur.execute("""INSERT INTO games(event_id, page, team_red, team_yellow, 
-                                    final_score_red, final_score_yellow) VALUES (?, ?, ?, ?, ?, ?)""", 
-                                    (event_id, page_num, team_red, team_yellow, fin_red, fin_yellow))
+                    # DB には3文字コードのみを保存する ( 国名部分の表記揺れを防ぐ )。
+                    # team_red / team_yellow 変数自体は LSFE 照合や LSD 紐付けで
+                    # フルネームのまま使うため、INSERT に渡す値だけ変換する。
+                    team_red_code = to_team_code(team_red)
+                    team_yellow_code = to_team_code(team_yellow)
+                    cur.execute("""INSERT INTO games(event_id, page, team_red, team_yellow,
+                                    final_score_red, final_score_yellow) VALUES (?, ?, ?, ?, ?, ?)""",
+                                    (event_id, page_num, team_red_code, team_yellow_code, fin_red, fin_yellow))
                     game_id = cur.lastrowid #game_idを取得
 
                     # --- LSDデータを抽出・保存 ---
@@ -265,10 +270,10 @@ class Worker(QThread):
                         for lsd in lsd_results:
                             if lsd["player_red"] and lsd["lsd_red"] is not None:
                                 cur.execute("INSERT INTO lsds (game_id, team, player_name, distance_cm) VALUES (?, ?, ?, ?)",
-                                            (game_id, team_red, lsd["player_red"], lsd["lsd_red"]))
+                                            (game_id, team_red_code, lsd["player_red"], lsd["lsd_red"]))
                             if lsd["player_yellow"] and lsd["lsd_yellow"] is not None:
                                 cur.execute("INSERT INTO lsds (game_id, team, player_name, distance_cm) VALUES (?, ?, ?, ?)",
-                                            (game_id, team_yellow, lsd["player_yellow"], lsd["lsd_yellow"]))
+                                            (game_id, team_yellow_code, lsd["player_yellow"], lsd["lsd_yellow"]))
 
                     # ---------------------------
                     # ここでエンドテーブルに情報を一括挿入
@@ -375,6 +380,13 @@ class Worker(QThread):
             return True
         elapsed_det = time.time() - start_time_det
         logger.info(f"[{game}] Detection complete (took {elapsed_det:.2f}s).")
+        # MD版: 同距離ブランクエンド ( ハウス内に両チームの石が残った膠着ブランク ) では
+        # 先攻後攻が交代しないため、get_hammer が入れた誤った交代を打ち消す。
+        # 同定は color_hammer を色制約に使うため、補正は同定より前に行う。
+        if self.is_md:
+            corrected = correct_equidistant_blank_hammer(self.conn, event_id)
+            if corrected:
+                logger.info(f"[{game}] Equidistant-blank hammer correction: {corrected} ends updated.")
         # ストーン同定: この大会の全エンドについて各石の投球元(shot_order)を特定する
         self.progress_signal.emit(0, f"{prefix}Matching stones...")
         start_time_match = time.time()
