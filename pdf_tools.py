@@ -531,3 +531,111 @@ def extract_year_and_category(game: str, is_md: bool) -> tuple[int | None, str |
                 else:
                     category = None
     return year, category
+
+
+# ============================================================================
+# 大会メタデータ ( 最終順位・会場 ) の抽出
+#   Final Standings ページ ( 五輪以外の世界選手権系フォーマット ) を対象とする。
+#   詳細な設計は docs/event_metadata_design.md を参照。
+# ============================================================================
+
+# 順位行のパターン: 行頭の数値 ( rank ) + 3文字コード + " - " ( 例: "1  GER - Germany ..." )
+# 選手行は行頭が Position ( 4/3/2/1 ) だが "XXX - 国名" を伴わないため、このパターンには一致しない。
+_STANDINGS_ROW_RE = re.compile(r'^\s*(\d+)\s+([A-Z]{3}) - ', re.MULTILINE)
+
+
+def is_standings_page(page: fitz.Page) -> bool:
+    """
+        指定ページが最終順位表 ( Final Standings ) のページかどうかを判定する。
+
+        単純な "Final Standings" の包含判定では Competition Summary 等の
+        後続ページも誤検出するため、見出し行での厳密判定を行う。
+        判定は sort=True で取得したテキストの各行を strip してから行う
+        ( 見出し行は先頭に大量の空白が付くため )。
+
+        Args:
+            page: PyMuPDF のページオブジェクト。
+
+        Returns:
+            bool: 単独見出し行 "Final Standings" と列見出し行 ( Rank/Team/Players を含む )
+                の両方を冒頭に持つ場合 True。
+    """
+    # 読み順を座標でソートして取得し、各行を strip する
+    lines = [line.strip() for line in page.get_text(sort=True).split("\n")]
+    head = lines[:14]  # 見出しはページ冒頭付近。多言語ページでも 14 行以内に収まる
+    has_fs_header = any(line == "Final Standings" for line in head)
+    has_column_header = any(
+        ("Rank" in line and "Team" in line and "Players" in line) for line in head
+    )
+    return has_fs_header and has_column_header
+
+
+def extract_standings(page: fitz.Page) -> list[tuple[int, str]]:
+    """
+        Final Standings ページから ( 順位, チームコード ) のリストを抽出する。
+
+        順位表は複数ページにわたる場合があるため、本関数は1ページ分のみを処理する。
+        呼び出し側で順位ページごとの結果を連結すること。
+
+        Args:
+            page: Final Standings の1ページ ( is_standings_page が True のページ )。
+
+        Returns:
+            list[tuple[int, str]]: ( rank, team ) のリスト。team は3文字コード。
+                順位行が無ければ空リスト。
+    """
+    text = page.get_text(sort=True)
+    results: list[tuple[int, str]] = []
+    for m in _STANDINGS_ROW_RE.finditer(text):
+        rank = int(m.group(1))
+        team = m.group(2)  # 既に3文字コード
+        results.append((rank, team))
+    return results
+
+
+def extract_venue(page: fitz.Page) -> tuple[str | None, str | None]:
+    """
+        Final Standings ページから会場情報 ( 所在地, 会場名 ) を抽出する。
+
+        会場情報はどの順位ページにも同一のものが載るため、先頭の順位ページから
+        1回だけ呼び出せばよい。書式の揺れに応じて所在地と会場名を分離する
+        ( 詳細は docs/event_metadata_design.md 5.2 )。
+
+        Args:
+            page: Final Standings の1ページ。
+
+        Returns:
+            tuple[str | None, str | None]: ( location, venue )。
+                - 空白で2分割できる: ( 所在地, 会場名 )
+                - " - " 区切り: ( ハイフン前, ハイフン後 )
+                - 会場名が先頭で分離困難: ( 会場行全体, None )
+                - 会場行が無い: ( None, None )
+    """
+    lines = [line.strip() for line in page.get_text(sort=True).split("\n")]
+    # "Final Standings" 見出し行より前で、カンマを含み Championship を含まない行を会場行とみなす
+    venue_line = None
+    for line in lines:
+        if line == "Final Standings":
+            break
+        if "," in line and "Championship" not in line:
+            venue_line = line
+            break
+
+    if not venue_line:
+        # 会場行が検出できない ( 所在地が無い多言語ページ等 )
+        return None, None
+
+    # 2連続以上の空白で分割を試みる ( 所在地と会場名が空白で隔てられているケース )
+    parts = [p.strip() for p in re.split(r"\s{2,}", venue_line) if p.strip()]
+    if len(parts) >= 2:
+        # パターン①: 前半=所在地, 後半=会場名
+        return parts[0], parts[1]
+
+    # 1要素のみ ( 空白で分割できない )
+    if " - " in venue_line:
+        # パターン②a: " - " の前が所在地, 後ろが会場名
+        location, venue = venue_line.split(" - ", 1)
+        return location.strip(), venue.strip()
+
+    # パターン②b: 会場名が先頭に紛れ分離困難 → 全体を location に生保存し venue は None
+    return venue_line, None
