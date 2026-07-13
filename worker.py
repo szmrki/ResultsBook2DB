@@ -221,6 +221,8 @@ class Worker(QThread):
 
         # MD版: Prepositioned stoneの座標を end_id → list[dict] のマップで蓄積する
         prepositioned_map: dict[int, list[dict[str, Any]] | None] = {}
+        # 会場情報は複数の順位ページに同一のものが載るため、最初の順位ページで1回だけ取得する
+        venue_saved = False
         start_time_det = time.time()
         with pdfplumber.open(pdf_path) as pdf:
             for pn in range(doc.page_count):
@@ -232,7 +234,26 @@ class Worker(QThread):
                 page_plumber = pdf.pages[pn]
                 page_mu = doc[pn]
                 text = page_mu.get_text()
-                if "Game Results" in text: #新たな試合
+                # 順位ページ ( is_standings_page ) の判定を最初に置く。
+                # is_standings_page は「単独行 Final Standings + 列見出し行」という
+                # 最も厳格な条件のため試合ページを誤って奪う心配が小さく、逆に順位ページの
+                # テキストに "Game Results" 等が紛れても正しく順位側に振り分けられる
+                # ( 分岐の順序依存による偽陰性を避ける )。
+                if is_standings_page(page_mu): #最終順位表のページ ( 複数ページにわたる )
+                    # 順位 ( standings ) を抽出して挿入する。順位ページは複数あるため都度追加する。
+                    for rank, team in extract_standings(page_mu):
+                        cur.execute("INSERT INTO standings(event_id, rank, team) VALUES (?, ?, ?)",
+                                    (event_id, rank, team))
+                    # 会場情報 ( location / venue ) は最初の順位ページで1回だけ取得し events を更新する。
+                    # 2ページ目以降には同じ会場情報が載るため再取得はしない。
+                    if not venue_saved:
+                        location, venue = extract_venue(page_mu)
+                        cur.execute("UPDATE events SET location = ?, venue = ? WHERE id = ?",
+                                    (location, venue, event_id))
+                        venue_saved = True
+                        logger.info(f"[{game}] Standings page: {page_num} - location: {location}, venue: {venue}")
+
+                elif "Game Results" in text: #新たな試合
                     if self.is_md:
                         scores, power_play_ends = extract_game_result(page_plumber, self.is_md) #得点表のdfとPPエンドのリスト
                     else:
