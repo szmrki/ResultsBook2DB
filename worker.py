@@ -247,7 +247,7 @@ class Worker(QThread):
                     # 会場情報 ( location / venue ) は最初の順位ページで1回だけ取得し events を更新する。
                     # 2ページ目以降には同じ会場情報が載るため再取得はしない。
                     if not venue_saved:
-                        location, venue = extract_venue(page_mu)
+                        location, venue = extract_venue(page_mu, game)
                         cur.execute("UPDATE events SET location = ?, venue = ? WHERE id = ?",
                                     (location, venue, event_id))
                         venue_saved = True

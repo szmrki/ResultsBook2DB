@@ -593,7 +593,7 @@ def extract_standings(page: fitz.Page) -> list[tuple[int, str]]:
     return results
 
 
-def extract_venue(page: fitz.Page) -> tuple[str | None, str | None]:
+def extract_venue(page: fitz.Page, game: str = "") -> tuple[str | None, str | None]:
     """
         Final Standings ページから会場情報 ( 所在地, 会場名 ) を抽出する。
 
@@ -601,17 +601,32 @@ def extract_venue(page: fitz.Page) -> tuple[str | None, str | None]:
         1回だけ呼び出せばよい。書式の揺れに応じて所在地と会場名を分離する
         ( 詳細は docs/event_metadata_design.md 5.2 )。
 
+        五輪 ( OWG ) は他フォーマットと行構造が異なる ( 会場名のみで所在地が無く、
+        カンマ区切りの会場行を持たない ) ため、大会名に "OWG" を含む場合は専用の
+        分岐で会場名のみを抽出する ( 判定材料はファイル名由来の大会名 game )。
+
         Args:
             page: Final Standings の1ページ。
+            game: 大会名 ( ファイル名由来 )。"OWG" を含む場合に五輪専用ロジックへ分岐する。
 
         Returns:
             tuple[str | None, str | None]: ( location, venue )。
+                - OWG: ( None, 会場名 )。所在地 ( 都市名 ) はテキストに載らないため None
                 - 空白で2分割できる: ( 所在地, 会場名 )
                 - " - " 区切り: ( ハイフン前, ハイフン後 )
                 - 会場名が先頭で分離困難: ( 会場行全体, None )
                 - 会場行が無い: ( None, None )
     """
     lines = [line.strip() for line in page.get_text(sort=True).split("\n")]
+
+    if "OWG" in game:
+        # 五輪 ( OWG ): 順位ページ行0の先頭要素が会場名 ( 例: "Cortina Curling Olympic Stadium" )。
+        # 行0は "会場名   ( 大量の空白 )   競技名/言語対訳" の形で、2連続以上の空白で分割した
+        # 先頭要素だけが会場名。所在地 ( 都市名 ) はテキストに存在しないため location は None とする。
+        line0 = lines[0] if lines else ""
+        venue = re.split(r"\s{2,}", line0)[0].strip() if line0 else ""
+        return None, (venue or None)
+
     # "Final Standings" 見出し行より前で、カンマを含み Championship を含まない行を会場行とみなす
     venue_line = None
     for line in lines:
