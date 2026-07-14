@@ -63,6 +63,7 @@ SQLite データベース (`.db`) は以下のテーブルで構成されてい�
 > **オリンピックの Results Book について**  
 > オリンピックの PDF は男女4人制とMDのデータが1つのファイルに統合されています。カテゴリーを正しく自動判別させるため、事前にファイルを3分割し、ファイル名に `men` または `women` (または `md`) というキーワードを含めて保存してください。  
 > 例: `OWG2022_ResultsBook.pdf` → `OWG2022_ResultsBook_men.pdf`, `OWG2022_ResultsBook_women.pdf`, `OWG2022_ResultsBook_md.pdf`
+> 所在地 (都市名) が記載されないため `location` は NULL となり、会場名 (`venue`) のみ格納します。 
 
 ### `standings` (最終順位情報)
 
@@ -74,9 +75,6 @@ SQLite データベース (`.db`) は以下のテーブルで構成されてい�
 | `event_id` | 大会ID (外部キー: `events.id`) |
 | `rank` | 最終順位 / 同順位・番号飛びを許容 |
 | `team` | チーム名 (3文字コード) |
-
-> [!NOTE]
-> 最終順位・会場情報は、世界選手権系フォーマット (ECC / PCCC / WJCC / WMCC / WWCC) および五輪 (OWG / OQE) を対象に抽出します。ただし五輪 (OWG) は所在地 (都市名) が記載されないため `location` は NULL となり、会場名 (`venue`) のみ格納します。
 
 ### `games` (試合情報)
 
