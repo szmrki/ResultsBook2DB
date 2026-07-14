@@ -245,10 +245,16 @@ class Worker(QThread):
                         cur.execute("INSERT INTO standings(event_id, rank, team) VALUES (?, ?, ?)",
                                     (event_id, rank, team))
                     # 選手ロースター ( rosters ) を抽出して挿入する。順位ページ ( 複数 ) に選手行が
-                    # 分かれて載るため standings と同様に都度追加する。extract_rosters は4人制専用の
-                    # フォーマット ( Position-Function ) を前提とするため、MD では実行しない
-                    # ( MD 対応は別ステップ。rosters テーブルも is_md でスキーマが分かれる )。
-                    if not self.is_md:
+                    # 分かれて載るため standings と同様に都度追加する。4人制と MD で記載フォーマットが
+                    # 異なり rosters のスキーマも is_md で分かれるため、抽出関数・挿入列を切り替える。
+                    if self.is_md:
+                        # MD 版: role / gender を持つ ( Position-Function は無い )。
+                        for r in extract_rosters_md(page_mu):
+                            cur.execute(
+                                "INSERT INTO rosters(event_id, team, player_name, role, gender) VALUES (?, ?, ?, ?, ?)",
+                                (event_id, r["team"], r["player_name"], r["role"], r["gender"]))
+                    else:
+                        # 4人制版: role / position / is_skip / is_vice を持つ。
                         for r in extract_rosters(page_mu):
                             cur.execute(
                                 """INSERT INTO rosters(event_id, team, player_name, role, position, is_skip, is_vice)

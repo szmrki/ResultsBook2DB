@@ -830,3 +830,197 @@ def __parse_roster_player(segment: str, is_rank_line: bool) -> dict[str, str | i
         "is_skip": is_skip,
         "is_vice": is_vice,
     }
+
+
+# ============================================================================
+# 選手ロースター ( rosters ) の抽出 ( MD = 混合ダブルス )
+#   MD の Final Standings ページは4人制と異なり Position-Function を持たない。
+#   記載フォーマットは2系統 ( 詳細は docs/event_metadata_design.md 9節 ):
+#     - 新MD ( 2019, 2021-2026 + 五輪MD ): 1行1人で末尾付近に Gender ( F/M/C ) を持つ。
+#     - 旧MD ( 2016-2018 ): 1行に女子・男子2人を並記 ( 役割記号なし )。
+#   列見出し行で系統を判定し、対応するパーサに振り分ける。
+# ============================================================================
+
+# 新MD の Gender トークン: 名前の後に現れる単独の1文字 ( F/M/C )。
+# 女子行は Gender の後ろに Group Rank ( 例 "A4" ) や DSC ( 例 "22.22 cm" ) が続くため
+# 行末アンカーは使えない。前後を空白で挟まれた単独の F/M/C を最初に1個だけ拾う。
+# ( 名前の姓は2文字以上なので単独1文字トークンと衝突しない )
+_MD_GENDER_TOKEN_RE = re.compile(r'(?<!\S)([FMC])(?!\S)')
+
+# 旧MD で名前の後ろに続く非名前トークン ( Group Rank = 英字+数字、DSC = "... cm" )。
+# 並記2列から女子名・男子名を切り出す際に、これらを名前候補から除外する。
+_MD_GROUP_RANK_RE = re.compile(r'^[A-Z]\d+$')
+
+# ページ末尾の凡例行 ( 例 "Team members are identified as follows: F = Female, M = Male, C = Coach" )
+# は単独の F/M/C を含み選手行と誤認しうる。凡例では記号の直後が " = 意味" になっている点で
+# 選手行 ( 記号の後ろは Group Rank/DSC か行末 ) と区別できるため、"F =" 形式を除外に使う。
+_MD_LEGEND_LINE_RE = re.compile(r'\b[FMC]\s*=')
+
+# 性別記号 ( PDF 記載の F/M ) を DB 保存用の単語へ展開する。
+# 既存の color='red'/'yellow'・role='player'/'coach' と表記スタイルを揃えるため単語で持つ。
+_MD_GENDER_WORD = {"F": "Female", "M": "Male"}
+
+
+def extract_rosters_md(page: fitz.Page) -> list[dict[str, str | None]]:
+    """
+        Final Standings ページ ( MD ) から選手ロースターを抽出する。
+
+        列見出し行を見て新MD ( Gender 列 ) か旧MD ( Female Player / Male Player 列 ) かを
+        判定し、対応するパーサで選手行を解釈する。順位行が現れるたびに team を切り替える。
+
+        Args:
+            page: Final Standings の1ページ ( is_standings_page が True のページ )。
+
+        Returns:
+            list[dict[str, str | None]]:
+                各選手の情報辞書のリスト。キーは team / player_name / role / gender。
+                欠員行 ( 選手名が "-" ) はスキップする。
+    """
+    lines = page.get_text(sort=True).split("\n")
+    # 列見出し行 ( Rank と Team を含む ) を探して系統を判定する。
+    is_old_md = False
+    for line in lines:
+        s = line.strip()
+        if "Rank" in s and "Team" in s:
+            # 旧MD は "Female Player" と "Male Player" の2列見出しを持つ。
+            is_old_md = ("Female Player" in s and "Male Player" in s)
+            break
+
+    rosters: list[dict[str, str | None]] = []
+    current_team: str | None = None
+
+    for raw_line in lines:
+        line = raw_line.rstrip()
+        if not line.strip():
+            continue
+
+        head = _ROSTER_RANK_HEAD_RE.match(line)
+        if head:
+            current_team = head.group(1)
+        elif current_team is None:
+            # 見出し行より前の行は team が未確定なので無視する。
+            continue
+
+        if is_old_md:
+            # 旧MD: 1行に女子・男子が並記される。順位行のみが選手を含む
+            # ( 継続行は無い ) ため、順位行だけを処理する。
+            if not head:
+                continue
+            parsed = __parse_roster_md_old(line)
+            # 旧MD は女子・男子2人が基本。2人揃わない場合は空白崩れ等による
+            # 抽出漏れの疑いがあるため警告ログを残す ( 取れた分は挿入する )。
+            if len(parsed) != 2:
+                logger.warning(
+                    f"MD ( old ) roster row yielded {len(parsed)} name(s) (team={current_team}): {line.strip()!r}")
+            for p in parsed:
+                p["team"] = current_team
+                rosters.append(p)
+        else:
+            # 新MD: 1行1人。順位行・継続行いずれも1人分の選手行として扱う。
+            p = __parse_roster_md_new(line, is_rank_line=bool(head))
+            if p is None:
+                continue
+            p["team"] = current_team
+            rosters.append(p)
+
+    return rosters
+
+
+def __parse_roster_md_new(segment: str, is_rank_line: bool) -> dict[str, str | None] | None:
+    """
+        新MD の選手行1行から選手名と Gender を解釈する。
+
+        Args:
+            segment: 選手1人分の行。順位行では "<順位> <CODE> - <国名> <選手名> <F/M/C> ..."、
+                継続行では "<選手名> <F/M/C>" ( Gender の後ろに Group Rank/DSC が続く場合あり )。
+            is_rank_line: 順位行かどうか。True の場合は選手名の前の順位・チーム部分を取り除く。
+
+        Returns:
+            dict[str, str | None] | None:
+                team を除く選手情報 ( player_name / role / gender )。
+                Gender トークンが無い行や欠員行 ( 選手名 "-" ) は None。
+    """
+    # 凡例行 ( "F = Female, ..." ) は選手行ではないため除外する。
+    if _MD_LEGEND_LINE_RE.search(segment):
+        return None
+
+    # スキップ行末の出場権マーカー ">OWG" 等を先に剥がす ( 付いていなければ無変化 )。
+    segment = _RELEGATION_TAIL_RE.sub("", segment)
+
+    # 名前の後にある単独の Gender トークン ( F/M/C ) を1個目だけ拾う。
+    m = _MD_GENDER_TOKEN_RE.search(segment)
+    if not m:
+        return None
+
+    name_part = segment[:m.start()].strip()
+
+    if is_rank_line:
+        # 順位行は "<順位>  <CODE> - <国名>  <選手名>" の形。2連続以上の空白で
+        # 順位+チーム部と選手名が分かれるため、末尾要素を選手名とする。
+        parts = re.split(r'\s{2,}', name_part)
+        player_name = parts[-1].strip() if parts else name_part
+    else:
+        player_name = name_part
+
+    # 欠員行 ( 選手名が "-" ) は登録しない。
+    if not player_name or player_name == "-":
+        return None
+
+    gender_code = m.group(1)
+    if gender_code == "C":
+        # コーチは氷上でプレーせず性別記載も無い。
+        return {"player_name": player_name, "role": "coach", "gender": None}
+    # F ( 女子 ) / M ( 男子 ) の選手。記号は単語 ( Female/Male ) に展開して保存する。
+    return {"player_name": player_name, "role": "player", "gender": _MD_GENDER_WORD[gender_code]}
+
+
+def __parse_roster_md_old(segment: str) -> list[dict[str, str | None]]:
+    """
+        旧MD の順位行1行から女子・男子2人分の選手を解釈する。
+
+        行は "<順位>  <CODE> - <国名>  <女子名>  <男子名>  [Group Rank]  [DSC]" の形。
+        全フィールドが2連続以上の空白で区切られる。順位+チーム部を取り除いた残りのうち、
+        Group Rank ( 英字+数字 ) ・DSC ( "... cm" ) ・メダル語を除いた先頭2要素を
+        女子名・男子名とする。
+
+        Args:
+            segment: 順位行1行。
+
+        Returns:
+            list[dict[str, str | None]]:
+                女子・男子の選手情報のリスト ( 最大2件、role=player )。
+                欠員 ( 名前 "-" ) は除外する。取得できなければ空リスト。
+    """
+    # "<順位>  <CODE> - <国名>" を取り除く。順位行ヘッダは
+    # 「行頭の順位 ( 数値/メダル語 ) + 3文字コード + ' - '」なので、その直後 ( 国名以降 ) を得る。
+    m = re.match(r'^\s*(?:\d+|Gold|Silver|Bronze)\s+[A-Z]{3} - (.*)$', segment)
+    if not m:
+        return []
+    rest = m.group(1)
+
+    # 2連続以上の空白で分割し、国名 ( 先頭 ) ・Group Rank・DSC・メダル語を除いて名前候補を得る。
+    tokens = [t.strip() for t in re.split(r'\s{2,}', rest) if t.strip()]
+    # 先頭要素は国名 ( 例 "Russia" / "United States" )。これを捨てる。
+    if tokens:
+        tokens = tokens[1:]
+
+    names = []
+    for tok in tokens:
+        if _MD_GROUP_RANK_RE.match(tok):
+            continue  # Group Rank ( 例 "D4" )
+        if "cm" in tok:
+            continue  # DSC ( 例 "28.23 cm" )
+        if tok in ("Gold Medal", "Silver Medal", "Bronze Medal"):
+            continue  # メダル表記
+        if tok == "-":
+            continue  # 欠員
+        names.append(tok)
+
+    # 先頭2要素を女子名・男子名とする ( 実データ構造: 女子が先、男子が後 )。
+    # gender は新MD と同じく単語 ( Female/Male ) で保存する。
+    result: list[dict[str, str | None]] = []
+    if len(names) >= 1:
+        result.append({"player_name": names[0], "role": "player", "gender": _MD_GENDER_WORD["F"]})
+    if len(names) >= 2:
+        result.append({"player_name": names[1], "role": "player", "gender": _MD_GENDER_WORD["M"]})
+    return result
