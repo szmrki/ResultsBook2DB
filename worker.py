@@ -244,6 +244,23 @@ class Worker(QThread):
                     for rank, team in extract_standings(page_mu):
                         cur.execute("INSERT INTO standings(event_id, rank, team) VALUES (?, ?, ?)",
                                     (event_id, rank, team))
+                    # 選手ロースター ( rosters ) を抽出して挿入する。順位ページ ( 複数 ) に選手行が
+                    # 分かれて載るため standings と同様に都度追加する。4人制と MD で記載フォーマットが
+                    # 異なり rosters のスキーマも is_md で分かれるため、抽出関数・挿入列を切り替える。
+                    if self.is_md:
+                        # MD 版: role / gender を持つ ( Position-Function は無い )。
+                        for r in extract_rosters_md(page_mu):
+                            cur.execute(
+                                "INSERT INTO rosters(event_id, team, player_name, role, gender) VALUES (?, ?, ?, ?, ?)",
+                                (event_id, r["team"], r["player_name"], r["role"], r["gender"]))
+                    else:
+                        # 4人制版: role / position / is_skip / is_vice を持つ。
+                        for r in extract_rosters(page_mu):
+                            cur.execute(
+                                """INSERT INTO rosters(event_id, team, player_name, role, position, is_skip, is_vice)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                (event_id, r["team"], r["player_name"], r["role"],
+                                 r["position"], r["is_skip"], r["is_vice"]))
                     # 会場情報 ( location / venue ) は最初の順位ページで1回だけ取得し events を更新する。
                     # 2ページ目以降には同じ会場情報が載るため再取得はしない。
                     if not venue_saved:

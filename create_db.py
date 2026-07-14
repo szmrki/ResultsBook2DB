@@ -63,6 +63,40 @@ def set_tables(dbname: str | Path, is_md: bool = False) -> None:
         )
         # 大会ごとに順位を引く用途が主なため、event_id にインデックスを張る
         cur.execute("CREATE INDEX IF NOT EXISTS idx_standings_event_id ON standings(event_id)")
+        
+        # rosters: 大会ごとの選手ロースター ( チーム構成・ポジション・役割 )。events に直接ぶら下がる枝。
+        # Final Standings ページの選手行から抽出する。4人制と MD で記載フォーマットが構造的に異なる
+        # ( 4人制 = Position-Function 、MD = Gender ) ため、ends と同様に is_md でスキーマを分岐する。
+        # 1つの DB は4人制か MD のどちらか専用 ( 混在しない ) ので、両者を同名 rosters にしても衝突しない。
+        if is_md:
+            # MD 版: MD の選手行は Position-Function を持たず Gender ( F/M/C ) で記載されるため、
+            # 4人制とは別の列構成にする ( 詳細は docs/event_metadata_design.md 9節 )。
+            #   role   : 'player' / 'coach'。4人制と同じ値集合に揃える ( 補欠概念は MD に無い )。
+            #   gender : 'Female' / 'Male' / NULL ( coach は性別記載なし )。role とは直交する別軸。
+            #            PDF 記載は F/M だが、既存の color='red'/'yellow' 等と表記を揃え単語で持つ。
+            cur.execute(
+                '''CREATE TABLE rosters (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER NOT NULL,
+                team STRING, player_name STRING,
+                role STRING, gender STRING,
+                FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
+            )
+        else:
+            # 4人制版: Position-Function 記号 ( 1/2/3/4, S, V, A, C ) を解釈して列に分解する。
+            # 列は「粗→細」で並べる ( role が最も粗い分類、そこから position・フラグへ絞る )。
+            #   role       : 'player' ( 氷上でプレーする選手・補欠含む ) / 'coach' ( C )。最も粗い分類。
+            #                補欠 ( Alternate ) も氷上選手なので player とし、role では区別しない。
+            #   position   : 投球順。正選手は 1-4、補欠 ( Alternate = フィフス ) は 5 とする。
+            #                Coach ( C ) は投球順を持たないため NULL。ORDER BY 用途で INTEGER のまま持つ。
+            #   is_skip    : Skip ( 記号 S ) なら 1、それ以外 0。position とは独立
+            #   is_vice    : Vice-skip ( 記号 V ) なら 1、それ以外 0。position とは独立
+            cur.execute(
+                '''CREATE TABLE rosters (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER NOT NULL,
+                team STRING, player_name STRING,
+                role STRING, position INTEGER, is_skip INTEGER, is_vice INTEGER,
+                FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
+            )
+        # 大会ごとにロースターを引く用途が主なため、event_id にインデックスを張る
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_rosters_event_id ON rosters(event_id)")
         cur.execute("COMMIT")
     except Exception:
         cur.execute("ROLLBACK")
