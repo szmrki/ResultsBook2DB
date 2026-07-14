@@ -664,3 +664,169 @@ def extract_venue(page: fitz.Page, game: str = "") -> tuple[str | None, str | No
 
     # パターン②b: 会場名が先頭に紛れ分離困難 → 全体を location に生保存し venue は None
     return venue_line, None
+
+
+# ============================================================================
+# 選手ロースター ( rosters ) の抽出 ( 4人制のみ )
+#   Final Standings ページの選手行から「チーム・選手名・ポジション・役割」を抽出する。
+#   4人制の選手行は末尾に Position-Function 記号 ( "4 S" / "3 V" / "2" / "1" / "A" / "C" 等 ) を持つ。
+#   MD は記載フォーマットが異なる ( Gender 列 ) ため、本関数は 4人制専用。MD 対応は別ステップ。
+# ============================================================================
+
+# 順位行の先頭部分: 行頭順位 ( 数値 or メダル語 ) + 3文字コード + " - " + 国名。
+# standings と同じ判定基準だが、ここでは「順位行かどうか」の判別と、行から
+# チームコードを取り出す目的で使う ( 国名以降には選手名と Position-Function が続く )。
+_ROSTER_RANK_HEAD_RE = re.compile(r'^\s*(?:\d+|Gold|Silver|Bronze)\s+([A-Z]{3}) - \S')
+
+# Position-Function 記号 ( 行末 )。
+#   - 投球順のみ: "1" 〜 "4"
+#   - 投球順 + 役割: "4 S" ( Skip ) / "3 V" ( Vice-skip )。順序は <数字> <英字>。
+#   - 役割のみ: "A" ( Alternate ) / "C" ( Coach )
+# 選手名にも空白が含まれる ( 例: "PETERSSON Haavard Vad" ) ため、
+# 「行末に固定された Position-Function 記号」だけを取り出す形でアンカーする。
+_POS_FUNC_TAIL_RE = re.compile(r'\s+([1-4])(?:\s+([SV]))?\s*$|\s+([AC])\s*$')
+
+# 降格マーカー ( 行末 )。A-Division 大会の降格圏チームのスキップ行 ( 順位行 ) には
+# Position-Function の後ろに ">B" ( B-Division へ降格 ) が付く ( 例: "... 4 S   >B" )。
+# このマーカーを先に剥がさないと Position-Function を行末アンカーで取り出せず、
+# スキップ行を丸ごと取りこぼす。">" + 英字1文字以上の塊を行末から除去する。
+_RELEGATION_TAIL_RE = re.compile(r'\s+>[A-Za-z]+\s*$')
+
+
+def extract_rosters(page: fitz.Page) -> list[dict[str, str | int | None]]:
+    """
+        Final Standings ページ ( 4人制 ) から選手ロースターを抽出する。
+
+        1チームは「順位行 ( 先頭選手を含む ) + 継続行 ( 2人目以降 )」の複数行で構成される。
+        順位行が現れるたびに team を切り替え、以降の選手行を同じ team に紐づける。
+        各選手行の末尾 Position-Function 記号から position / is_skip / is_vice / role を解釈する。
+
+        Args:
+            page: Final Standings の1ページ ( is_standings_page が True のページ )。
+
+        Returns:
+            list[dict[str, str | int | None]]:
+                各選手の情報辞書のリスト。キーは
+                team / player_name / role / position / is_skip / is_vice。
+                欠員行 ( 選手名が "-" ) はスキップする。
+    """
+    lines = page.get_text(sort=True).split("\n")
+    rosters: list[dict[str, str | int | None]] = []
+    current_team: str | None = None
+
+    for raw_line in lines:
+        line = raw_line.rstrip()
+        if not line.strip():
+            continue
+
+        # 順位行なら team を更新する。順位行は先頭選手も同じ行に含むため、
+        # ここで team を確定したうえで、行から順位・チーム部分を取り除いて選手部分を得る。
+        head = _ROSTER_RANK_HEAD_RE.match(line)
+        if head:
+            current_team = head.group(1)
+            # "<順位>  <CODE> - <国名>" の部分を取り除き、選手名 + Position-Function を残す。
+            # 国名は可変長 ( 単語数不定 ) だが、選手名は必ず大文字連続の姓で始まるため、
+            # " - " 以降を1回だけ空白分割で読み飛ばすのではなく、末尾の Position-Function を
+            # 起点に切り出す ( 下の共通処理に委ねる )。ここでは行全体を選手行として扱う。
+            player_segment = line
+        else:
+            # 継続行 ( 2人目以降 )。team がまだ無い ( 見出し前の行など ) 場合は無視する。
+            if current_team is None:
+                continue
+            player_segment = line
+
+        parsed = __parse_roster_player(player_segment, is_rank_line=bool(head))
+        if parsed is None:
+            # 順位行 ( 各チームの先頭選手行 ) が解釈できないのは強い異常シグナル。
+            # Position-Function 記号は 1/2/3/4・A・C・S・V の閉じた集合のため、
+            # ここに到達するのは未知の記号・書式変化・抽出崩れが疑われるケース。
+            # 記号集合が破綻していないかを検知できるよう警告ログを残す ( 挿入はスキップ )。
+            if head:
+                logger.warning(f"Roster rank-line could not be parsed (team={current_team}): {line.strip()!r}")
+            continue
+        parsed["team"] = current_team
+        rosters.append(parsed)
+
+    return rosters
+
+
+def __parse_roster_player(segment: str, is_rank_line: bool) -> dict[str, str | int | None] | None:
+    """
+        選手行1行から選手名と Position-Function を解釈する ( 4人制 )。
+
+        Args:
+            segment: 選手1人分の行。順位行の場合は "<順位> <CODE> - <国名> <選手名> <記号>"、
+                継続行の場合は "<選手名> <記号>" ( いずれも前後空白は許容 )。
+            is_rank_line: 順位行 ( 先頭に順位+チームを含む ) かどうか。
+                True の場合は選手名の前にある順位・チーム部分を取り除く。
+
+        Returns:
+            dict[str, str | int | None] | None:
+                team を除く選手情報 ( player_name / raw_code / position / is_skip / is_vice / role )。
+                Position-Function が読めない行や欠員行 ( 選手名 "-" ) は None。
+    """
+    # 降格圏スキップ行の行末マーカー ">B" を先に剥がす ( 付いていなければ無変化 )。
+    # これを残すと Position-Function を行末アンカーで取り出せない。
+    segment = _RELEGATION_TAIL_RE.sub("", segment)
+
+    # 末尾の Position-Function 記号を取り出す。
+    m = _POS_FUNC_TAIL_RE.search(segment)
+    if not m:
+        # 末尾に記号が無い行 ( 見出し・注記など ) はロースター行ではない。
+        return None
+
+    # 記号より前が「選手名 ( 順位行では順位+チーム+選手名 )」。
+    name_part = segment[:m.start()].strip()
+
+    if is_rank_line:
+        # 順位行は "<順位>  <CODE> - <国名>  <選手名>" の形。" - " の後ろ ( 国名+選手名 ) から
+        # 国名を読み飛ばして選手名だけを残す。国名・選手名とも空白を含みうるため、
+        # 選手名は「最後の大文字始まり姓 + 名」を安定して切り出すのが難しい。
+        # ここでは実データ ( "1  SCO - Scotland   MOUAT Bruce" ) の構造を用い、
+        # 2連続以上の空白で「<順位 CODE - 国名>」と「<選手名>」が隔てられている点を利用する。
+        parts = re.split(r'\s{2,}', name_part)
+        # 末尾要素が選手名。ソート済みテキストでは "1  SCO - Scotland   MOUAT Bruce" のように
+        # 順位+チーム部と選手名が2連続空白で分かれる ( 実データ全ファイルで確認 )。
+        player_name = parts[-1].strip() if parts else name_part
+    else:
+        player_name = name_part
+
+    # 欠員行 ( 選手名が "-" ) は選手として登録しない。
+    if not player_name or player_name == "-":
+        return None
+
+    # --- Position-Function 記号を解釈する ---
+    # マッチは2系統: (group1,group2) = <数字>,<S/V?> または (group3) = A/C
+    position: int | None = None
+    is_skip = 0
+    is_vice = 0
+    role: str
+
+    if m.group(1) is not None:
+        # 投球順あり ( 1-4 )。role は player。S/V があれば skip/vice フラグを立てる。
+        position = int(m.group(1))
+        func = m.group(2)  # "S" / "V" / None
+        if func == "S":
+            is_skip = 1
+        elif func == "V":
+            is_vice = 1
+        role = "player"
+    else:
+        # 役割のみ ( A = Alternate / C = Coach )。
+        func = m.group(3)
+        if func == "A":
+            # 補欠 ( Alternate ) も氷上でプレーする選手なので role は player とし、
+            # 投球順は「フィフス」の呼称に合わせて position=5 で表す ( 正選手 1-4 の続き )。
+            role = "player"
+            position = 5
+        else:
+            # コーチ ( C ) は氷上でプレーしないため role=coach、投球順は持たない ( NULL )。
+            role = "coach"
+
+    return {
+        "player_name": player_name,
+        "role": role,
+        "position": position,
+        "is_skip": is_skip,
+        "is_vice": is_vice,
+    }
