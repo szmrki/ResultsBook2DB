@@ -539,9 +539,15 @@ def extract_year_and_category(game: str, is_md: bool) -> tuple[int | None, str |
 #   詳細な設計は docs/event_metadata_design.md を参照。
 # ============================================================================
 
-# 順位行のパターン: 行頭の数値 ( rank ) + 3文字コード + " - " ( 例: "1  GER - Germany ..." )
+# 順位行のパターン: 行頭の順位 + 3文字コード + " - " ( 例: "1  GER - Germany ..." )
+# 順位は数値 ( "1" ) のほか、上位3位が Gold / Silver / Bronze と表記される
+# フォーマット ( 古い MD の WMDCC 等 ) があるためメダル語も許容する。
+# 直後に "3文字コード + ' - '" を要求するため、"Gold Medal" 等の選手行語句には誤爆しない。
 # 選手行は行頭が Position ( 4/3/2/1 ) だが "XXX - 国名" を伴わないため、このパターンには一致しない。
-_STANDINGS_ROW_RE = re.compile(r'^\s*(\d+)\s+([A-Z]{3}) - ', re.MULTILINE)
+_STANDINGS_ROW_RE = re.compile(r'^\s*(\d+|Gold|Silver|Bronze)\s+([A-Z]{3}) - ', re.MULTILINE)
+
+# メダル語表記を数値順位へ正規化する ( Gold=1, Silver=2, Bronze=3 )
+_MEDAL_TO_RANK = {"Gold": 1, "Silver": 2, "Bronze": 3}
 
 
 def is_standings_page(page: fitz.Page) -> bool:
@@ -557,15 +563,17 @@ def is_standings_page(page: fitz.Page) -> bool:
             page: PyMuPDF のページオブジェクト。
 
         Returns:
-            bool: 単独見出し行 "Final Standings" と列見出し行 ( Rank/Team/Players を含む )
+            bool: 単独見出し行 "Final Standings" と列見出し行 ( Rank/Team/Player を含む )
                 の両方を冒頭に持つ場合 True。
     """
     # 読み順を座標でソートして取得し、各行を strip する
     lines = [line.strip() for line in page.get_text(sort=True).split("\n")]
     head = lines[:14]  # 見出しはページ冒頭付近。多言語ページでも 14 行以内に収まる
     has_fs_header = any(line == "Final Standings" for line in head)
+    # 列見出しは 4人制 = "Players"、MD = "Female Player / Male Player" と表記が分かれるため、
+    # 複数形の "s" を含めず "Player" で両対応する ( 古い MD の検出漏れ対策 )。
     has_column_header = any(
-        ("Rank" in line and "Team" in line and "Players" in line) for line in head
+        ("Rank" in line and "Team" in line and "Player" in line) for line in head
     )
     return has_fs_header and has_column_header
 
@@ -587,13 +595,15 @@ def extract_standings(page: fitz.Page) -> list[tuple[int, str]]:
     text = page.get_text(sort=True)
     results: list[tuple[int, str]] = []
     for m in _STANDINGS_ROW_RE.finditer(text):
-        rank = int(m.group(1))
+        raw_rank = m.group(1)
+        # 数値ならそのまま、メダル語 ( Gold/Silver/Bronze ) なら 1/2/3 に正規化する
+        rank = _MEDAL_TO_RANK[raw_rank] if raw_rank in _MEDAL_TO_RANK else int(raw_rank)
         team = m.group(2)  # 既に3文字コード
         results.append((rank, team))
     return results
 
 
-def extract_venue(page: fitz.Page) -> tuple[str | None, str | None]:
+def extract_venue(page: fitz.Page, game: str = "") -> tuple[str | None, str | None]:
     """
         Final Standings ページから会場情報 ( 所在地, 会場名 ) を抽出する。
 
@@ -601,17 +611,32 @@ def extract_venue(page: fitz.Page) -> tuple[str | None, str | None]:
         1回だけ呼び出せばよい。書式の揺れに応じて所在地と会場名を分離する
         ( 詳細は docs/event_metadata_design.md 5.2 )。
 
+        五輪 ( OWG ) は他フォーマットと行構造が異なる ( 会場名のみで所在地が無く、
+        カンマ区切りの会場行を持たない ) ため、大会名に "OWG" を含む場合は専用の
+        分岐で会場名のみを抽出する ( 判定材料はファイル名由来の大会名 game )。
+
         Args:
             page: Final Standings の1ページ。
+            game: 大会名 ( ファイル名由来 )。"OWG" を含む場合に五輪専用ロジックへ分岐する。
 
         Returns:
             tuple[str | None, str | None]: ( location, venue )。
+                - OWG: ( None, 会場名 )。所在地 ( 都市名 ) はテキストに載らないため None
                 - 空白で2分割できる: ( 所在地, 会場名 )
                 - " - " 区切り: ( ハイフン前, ハイフン後 )
                 - 会場名が先頭で分離困難: ( 会場行全体, None )
                 - 会場行が無い: ( None, None )
     """
     lines = [line.strip() for line in page.get_text(sort=True).split("\n")]
+
+    if "OWG" in game:
+        # 五輪 ( OWG ): 順位ページ行0の先頭要素が会場名 ( 例: "Cortina Curling Olympic Stadium" )。
+        # 行0は "会場名   ( 大量の空白 )   競技名/言語対訳" の形で、2連続以上の空白で分割した
+        # 先頭要素だけが会場名。所在地 ( 都市名 ) はテキストに存在しないため location は None とする。
+        line0 = lines[0] if lines else ""
+        venue = re.split(r"\s{2,}", line0)[0].strip() if line0 else ""
+        return None, (venue or None)
+
     # "Final Standings" 見出し行より前で、カンマを含み Championship を含まない行を会場行とみなす
     venue_line = None
     for line in lines:
