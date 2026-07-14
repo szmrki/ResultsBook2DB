@@ -539,9 +539,15 @@ def extract_year_and_category(game: str, is_md: bool) -> tuple[int | None, str |
 #   詳細な設計は docs/event_metadata_design.md を参照。
 # ============================================================================
 
-# 順位行のパターン: 行頭の数値 ( rank ) + 3文字コード + " - " ( 例: "1  GER - Germany ..." )
+# 順位行のパターン: 行頭の順位 + 3文字コード + " - " ( 例: "1  GER - Germany ..." )
+# 順位は数値 ( "1" ) のほか、上位3位が Gold / Silver / Bronze と表記される
+# フォーマット ( 古い MD の WMDCC 等 ) があるためメダル語も許容する。
+# 直後に "3文字コード + ' - '" を要求するため、"Gold Medal" 等の選手行語句には誤爆しない。
 # 選手行は行頭が Position ( 4/3/2/1 ) だが "XXX - 国名" を伴わないため、このパターンには一致しない。
-_STANDINGS_ROW_RE = re.compile(r'^\s*(\d+)\s+([A-Z]{3}) - ', re.MULTILINE)
+_STANDINGS_ROW_RE = re.compile(r'^\s*(\d+|Gold|Silver|Bronze)\s+([A-Z]{3}) - ', re.MULTILINE)
+
+# メダル語表記を数値順位へ正規化する ( Gold=1, Silver=2, Bronze=3 )
+_MEDAL_TO_RANK = {"Gold": 1, "Silver": 2, "Bronze": 3}
 
 
 def is_standings_page(page: fitz.Page) -> bool:
@@ -557,15 +563,17 @@ def is_standings_page(page: fitz.Page) -> bool:
             page: PyMuPDF のページオブジェクト。
 
         Returns:
-            bool: 単独見出し行 "Final Standings" と列見出し行 ( Rank/Team/Players を含む )
+            bool: 単独見出し行 "Final Standings" と列見出し行 ( Rank/Team/Player を含む )
                 の両方を冒頭に持つ場合 True。
     """
     # 読み順を座標でソートして取得し、各行を strip する
     lines = [line.strip() for line in page.get_text(sort=True).split("\n")]
     head = lines[:14]  # 見出しはページ冒頭付近。多言語ページでも 14 行以内に収まる
     has_fs_header = any(line == "Final Standings" for line in head)
+    # 列見出しは 4人制 = "Players"、MD = "Female Player / Male Player" と表記が分かれるため、
+    # 複数形の "s" を含めず "Player" で両対応する ( 古い MD の検出漏れ対策 )。
     has_column_header = any(
-        ("Rank" in line and "Team" in line and "Players" in line) for line in head
+        ("Rank" in line and "Team" in line and "Player" in line) for line in head
     )
     return has_fs_header and has_column_header
 
@@ -587,7 +595,9 @@ def extract_standings(page: fitz.Page) -> list[tuple[int, str]]:
     text = page.get_text(sort=True)
     results: list[tuple[int, str]] = []
     for m in _STANDINGS_ROW_RE.finditer(text):
-        rank = int(m.group(1))
+        raw_rank = m.group(1)
+        # 数値ならそのまま、メダル語 ( Gold/Silver/Bronze ) なら 1/2/3 に正規化する
+        rank = _MEDAL_TO_RANK[raw_rank] if raw_rank in _MEDAL_TO_RANK else int(raw_rank)
         team = m.group(2)  # 既に3文字コード
         results.append((rank, team))
     return results
