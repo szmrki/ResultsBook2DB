@@ -21,6 +21,8 @@ detection.needs_flip は逆さまの図を見分けて180°回転させるが、
     MISS      : 判定が正解と食い違った ( 反転の取りこぼし、または誤った反転 )
     undecided : 判定できなかった ( needs_flip が None を返した )
     unclear   : 正解が不明で、判定の正しさを確かめられなかった
+これとは別に、主の判定 ( 上下の白い画素の数 ) で決まらず、副の判定 ( ホッグライン ) に
+回った図の数を by_hog として表示する。
 
 使い方:
     # すべての PDF を監査する ( 結果は --out のディレクトリに audit.csv として保存される )
@@ -62,6 +64,8 @@ MAX_SAVED_IMAGES = 3
 # pdf_tools.__extract_images は名前が "__" で始まるため、from ... import では取り込めない。
 # getattr で名前を文字列として渡せば取り出せる ( 取り込みと同じ方法で図を取り出すために使う )
 extract_images = getattr(pdf_tools, "__extract_images")
+# 主の判定 ( 上下の白い画素の数 ) だけを呼び、副の判定 ( ホッグライン ) に回った図を数えるために使う
+flip_by_white = getattr(detection, "__flip_by_white")
 
 
 def hog_signal(img: np.ndarray) -> bool | None:
@@ -78,8 +82,11 @@ def hog_signal(img: np.ndarray) -> bool | None:
     # 各画素について「3色とも 80 未満 ( ほぼ黒 ) か」を調べ、行ごとにその割合を出す。
     # 線に石が少し重なっていても拾えるよう、行の8割がほぼ黒なら「黒い横線」とみなす
     dark_rows = (img[:, 1:detection.WIDTH].max(axis=2) < 80).mean(axis=1) > 0.8
-    top = bool(dark_rows[10:35].any())      # 上端の付近に黒い横線があるか
-    bottom = bool(dark_rows[-35:-10].any())  # 下端の付近に黒い横線があるか
+    # ホッグラインは端から19〜20行目にある。探す範囲は detection の判定とそろえる
+    # ( 範囲を広げると、図の枠線やバックラインなど別の線をホッグラインとみなすおそれがあるため )
+    hog_from, hog_to = detection.FLIP_HOG_FROM, detection.FLIP_HOG_TO
+    top = bool(dark_rows[hog_from:hog_to].any())      # 上端の付近に黒い横線があるか
+    bottom = bool(dark_rows[-hog_to:-hog_from].any())  # 下端の付近に黒い横線があるか
     if top and not bottom:
         return True
     if bottom and not top:
@@ -160,6 +167,9 @@ def audit_pdf(pdf_path: Path, out_dir: Path) -> tuple[collections.Counter, list[
             else:
                 status = "MISS"
             counts[status] += 1
+            # 主の判定で決まらず、副の判定に回った図の数 ( 結果の種類とは別に数える )
+            if flip_by_white(img) is None:
+                counts["by_hog"] += 1
             if status == "ok":
                 continue
 
@@ -194,7 +204,7 @@ def main() -> None:
     with ProcessPoolExecutor(max_workers=args.jobs) as executor:
         results = executor.map(audit_pdf, pdf_paths, [args.out] * len(pdf_paths))
         for pdf_path, (counts, rows) in zip(pdf_paths, results):
-            print(pdf_path.name, {s: counts[s] for s in STATUSES if counts[s]}, flush=True)
+            print(pdf_path.name, {s: counts[s] for s in (*STATUSES, "by_hog") if counts[s]}, flush=True)
             total += counts
             all_rows += rows
 
@@ -203,7 +213,8 @@ def main() -> None:
         writer.writerow(["pdf", "page", "idx", "x", "y", "negated", "judged", "house", "hog", "truth", "status"])
         writer.writerows(all_rows)
 
-    print("TOTAL", {"total": sum(total.values()), **{s: total[s] for s in STATUSES}})
+    # by_hog は結果の種類とは別の数え方なので、枚数の合計には含めない
+    print("TOTAL", {"total": sum(total[s] for s in STATUSES), **{s: total[s] for s in (*STATUSES, "by_hog")}})
     sys.exit(1 if total["MISS"] or total["undecided"] else 0)
 
 

@@ -81,13 +81,12 @@ def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model: YOLO, is_md: 
     if is_md and "prepositioned stones" in [t.lower() for t in text]:
         pre_entry = shotbyshot_list.pop(0)  # 先頭画像を取り出す (削除ではなく座標抽出用)
         pre_result = get_stones_pos(
-            [pre_entry["img"]], model, [pre_entry.get("is_negated", False)]
+            [pre_entry["img"]], model, f"page {page.number + 1} prepositioned stones"
         )
         pre_stones = pre_result[0]  # (16, 6) の numpy配列
-            
+
     imgs = [entry["img"] for entry in shotbyshot_list]
-    is_negated_list = [entry.get("is_negated", False) for entry in shotbyshot_list]
-    stones_end_list = get_stones_pos(imgs, model, is_negated_list)
+    stones_end_list = get_stones_pos(imgs, model, f"page {page.number + 1}")
     stones_end = np.array(stones_end_list)  #(num_shots, 16, 6)
 
     return stones_end, shot_info_list, pre_stones

@@ -36,6 +36,8 @@ FLIP_WHITE_MIN = 240     #この値以上なら白とみなす ( JPEGのノイ�
 FLIP_WHITE_MARGIN = 0.15 #上下の白い画素の数の差が、全体のこの割合未満なら判定しない
 FLIP_DARK_MAX = 80       #この値未満なら黒とみなす ( JPEGのノイズで0にならない場合があるため )
 FLIP_LINE_RATIO = 0.8    #1行のうちこの割合以上が黒なら横線とみなす ( 線に石が少し重なる場合があるため )
+FLIP_HOG_FROM = 18       #ホッグラインを探す範囲の始まり ( 上端または下端から数えた行数 )
+FLIP_HOG_TO = 22         #ホッグラインを探す範囲の終わり ( この行は含まない )
 
 def __flip_by_white(img: np.ndarray) -> bool | None:
     """
@@ -68,8 +70,10 @@ def __flip_by_hogline(img: np.ndarray) -> bool | None:
     """
     #左右1ピクセルが余白の可能性があるため除く
     dark_rows = (img[:, 1:WIDTH].max(axis=2) < FLIP_DARK_MAX).mean(axis=1) > FLIP_LINE_RATIO
-    top = bool(dark_rows[10:35].any())
-    bottom = bool(dark_rows[-35:-10].any())
+    #ホッグラインは端から19〜20行目にある ( 図の高さが600と601の2種類あり、1行ずれる ) 。
+    #図の枠線 ( 端から0〜1行目 ) と、反対側の向きのときのバックライン ( 端から39〜40行目 ) は拾わない
+    top = bool(dark_rows[FLIP_HOG_FROM:FLIP_HOG_TO].any())
+    bottom = bool(dark_rows[-FLIP_HOG_TO:-FLIP_HOG_FROM].any())
     if top == bottom:
         return None
     return top
