@@ -822,7 +822,7 @@ class MainWindow(QMainWindow):
             ret = QMessageBox.warning(
                 self, "中止の確認",
                 "解析を中止しますか？\n\n"
-                "⚠️ 処理を中断すると、現在処理中の大会の\n"
+                "処理を中断すると、現在処理中の大会の\n"
                 "データはデータベースに保存されません。\n"
                 "（処理が完了したファイルは保存済みです）",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
