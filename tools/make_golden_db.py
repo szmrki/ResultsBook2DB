@@ -39,6 +39,7 @@ from create_db import set_tables  # noqa: E402
 from event_processing import (  # noqa: E402
     extract_event, load_event_result, postprocess_event, save_event_result, write_event,
 )
+from utils import predict_event_name  # noqa: E402
 from worker import Worker  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -60,27 +61,6 @@ PRESET: list[tuple[str, bool]] = [
     ("data_md/WMDCC2026_ResultsBook.pdf", True),       # 新MD形式 ( 事前配置石あり )
     ("data_md/OWG2026_ResultsBook_MD.pdf", True),      # 五輪MD
 ]
-
-
-def predict_event_name(filename: str) -> str:
-    """ファイル名から大会名を推測する。
-
-    main.py の MainWindow.predict_event_name と同じ規則 ( 大文字略称 + 年度 + Men/Women ) 。
-    GUI クラスのメソッドで import できないため、issue #22 で関数として切り出すまでは複製して使う。
-
-    Args:
-        filename: PDF のファイル名 ( 例: "WJCC2022_ResultsBook_Men.pdf" )
-
-    Returns:
-        str: 大会名 ( 例: "WJCC2022Men" )
-    """
-    text = filename.split('_')[0].upper()
-    # "women" は "men" を含むため、先に women を判定する
-    if "women" in filename.lower():
-        text += "Women"
-    elif "men" in filename.lower():
-        text += "Men"
-    return text
 
 
 def make_one(pdf_path: Path, is_md: bool, out_dir: Path, via_json: bool = False) -> Path:

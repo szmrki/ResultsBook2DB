@@ -92,3 +92,20 @@ def __try_int(x: Any) -> int | str:
         return int(x)
     except ValueError:
         return x
+
+def predict_event_name(filename: str) -> str:
+    """
+        PDFのファイル名から大会名を推測する
+        大会名は大文字略称＋年度＋(Men or Women)
+        Args:
+            filename : PDFのファイル名 ( 例: "WJCC2022_ResultsBook_Men.pdf" )
+        Returns:
+            str : 大会名 ( 例: "WJCC2022Men" )
+    """
+    text = filename.split('_')[0].upper()
+    # "women" は "men" を含むため、先に women を判定する
+    if "women" in filename.lower():
+        text += "Women"
+    elif "men" in filename.lower():
+        text += "Men"
+    return text
