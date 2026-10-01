@@ -17,10 +17,15 @@ complete_model/ に大会ごとのファインチューニング済みモデル 
     # PDF を個別に指定する ( MD は --md を付ける )
     uv run python tools/make_golden_db.py --out db/golden/before --pdf C:/ResultsBook/data_4p/WJCC2022_ResultsBook_Men.pdf
     uv run python tools/make_golden_db.py --out db/golden/before --md --pdf C:/ResultsBook/data_md/WMDCC2016_ResultsBook.pdf
+
+    # Worker を使わず、解析結果を JSON ファイルに書き出して読み込み直してから DB に書き込む
+    # ( 「PDF の解析」と「DB への書き込み」を別々に行う経路の確認用 )
+    uv run python tools/make_golden_db.py --out db/golden/after_json --via-json
 """
 import argparse
 import logging
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -31,6 +36,10 @@ sys.path.insert(0, str(REPO_ROOT))
 from PySide6.QtCore import QCoreApplication  # noqa: E402
 
 from create_db import set_tables  # noqa: E402
+from event_processing import (  # noqa: E402
+    extract_event, load_event_result, postprocess_event, save_event_result, write_event,
+)
+from utils import predict_event_name  # noqa: E402
 from worker import Worker  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -54,28 +63,7 @@ PRESET: list[tuple[str, bool]] = [
 ]
 
 
-def predict_event_name(filename: str) -> str:
-    """ファイル名から大会名を推測する。
-
-    main.py の MainWindow.predict_event_name と同じ規則 ( 大文字略称 + 年度 + Men/Women ) 。
-    GUI クラスのメソッドで import できないため、issue #22 で関数として切り出すまでは複製して使う。
-
-    Args:
-        filename: PDF のファイル名 ( 例: "WJCC2022_ResultsBook_Men.pdf" )
-
-    Returns:
-        str: 大会名 ( 例: "WJCC2022Men" )
-    """
-    text = filename.split('_')[0].upper()
-    # "women" は "men" を含むため、先に women を判定する
-    if "women" in filename.lower():
-        text += "Women"
-    elif "men" in filename.lower():
-        text += "Men"
-    return text
-
-
-def make_one(pdf_path: Path, is_md: bool, out_dir: Path) -> Path:
+def make_one(pdf_path: Path, is_md: bool, out_dir: Path, via_json: bool = False) -> Path:
     """PDF を1件、空の SQLite に取り込む。
 
     出力先に同名の DB がある場合は削除して作り直す ( 毎回まっさらな状態から作るため ) 。
@@ -84,6 +72,8 @@ def make_one(pdf_path: Path, is_md: bool, out_dir: Path) -> Path:
         pdf_path: 取り込む PDF のパス
         is_md: MD ( 混合ダブルス ) の PDF なら True
         out_dir: DB の出力先ディレクトリ
+        via_json: True なら Worker を使わず、解析結果を JSON ファイルに書き出して
+            読み込み直してから DB に書き込む
 
     Returns:
         Path: 作成した DB のパス
@@ -99,11 +89,49 @@ def make_one(pdf_path: Path, is_md: bool, out_dir: Path) -> Path:
         db_path.unlink()
     set_tables(db_path, is_md)
 
+    if via_json:
+        ingest_via_json(pdf_path, event_name, is_md, db_path, out_dir / "json" / f"{event_name}.json")
+        return db_path
+
     # GUI と同じ Worker を使う。start() ( 別スレッドでの実行 ) ではなく run() を直接呼ぶことで、
     # このスクリプトのスレッドで同期的に処理させる。シグナルは接続先が無いので何も起きない。
     worker = Worker([{"path": pdf_path, "event_name": event_name}], db_path, is_md=is_md)
     worker.run()
     return db_path
+
+
+def ingest_via_json(pdf_path: Path, event_name: str, is_md: bool, db_path: Path, json_path: Path) -> None:
+    """Worker を使わずに PDF を取り込む。解析結果はいったん JSON ファイルを経由させる。
+
+    「解析の担当が PDF を解析して解析結果ファイルを作り、サーバがそれを読んで DB に書き込む」
+    という分担 ( issue #21 ) と同じ経路を、1つのプロセスの中で再現する。
+
+    Args:
+        pdf_path: 取り込む PDF のパス
+        event_name: 大会名
+        is_md: MD ( 混合ダブルス ) の PDF なら True
+        db_path: 書き込み先の DB ( テーブル作成済み ) のパス
+        json_path: 解析結果ファイルの書き出し先
+    """
+    # 1. PDF → 解析結果 → JSON ファイル ( ここまでは DB に触れない )
+    result = extract_event(pdf_path, event_name, is_md)
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    save_event_result(result, json_path)
+
+    # 2. JSON ファイル → 解析結果。書き出す前と同じ内容に戻ることを確かめる
+    loaded = load_event_result(json_path)
+    if loaded != result:
+        logger.error(f"{event_name}: JSON を読み込み直した解析結果が、書き出す前と一致しません")
+
+    # 3. 解析結果 → DB → 後処理
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON;")
+        event_id, prepositioned_map = write_event(conn, loaded)
+        postprocess_event(conn, event_id, is_md, prepositioned_map)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def main() -> None:
@@ -112,6 +140,8 @@ def main() -> None:
     parser.add_argument("--out", required=True, type=Path, help="DB の出力先ディレクトリ ( 例: db/golden/before )")
     parser.add_argument("--pdf", nargs="+", type=Path, help="取り込む PDF ( 省略時は PRESET を使う )")
     parser.add_argument("--md", action="store_true", help="--pdf で指定した PDF が MD の場合に付ける")
+    parser.add_argument("--via-json", action="store_true",
+                        help="Worker を使わず、解析結果を JSON ファイル経由で DB に書き込む ( <out>/json/ に書き出す )")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -134,7 +164,7 @@ def main() -> None:
         if not pdf_path.exists():
             logger.error(f"PDF が見つかりません: {pdf_path}")
             continue
-        db_path = make_one(pdf_path, is_md, out_dir)
+        db_path = make_one(pdf_path, is_md, out_dir, args.via_json)
         logger.info(f"作成: {db_path}")
 
 

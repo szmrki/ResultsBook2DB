@@ -34,6 +34,7 @@ from PySide6.QtGui import (QDragEnterEvent, QDropEvent, QMouseEvent, QColor, QTe
 from pathlib import Path
 from create_db import set_tables
 from worker import Worker
+from utils import predict_event_name
 import multiprocessing
 import logging
 import tomllib
@@ -664,18 +665,6 @@ class MainWindow(QMainWindow):
             }
         """)
 
-    def predict_event_name(self, filename: str) -> str:
-        """
-            ファイル名から大会名を推測する
-            大会名は大文字略称＋年度＋(Men or Women)
-        """
-        text = filename.split('_')[0].upper()
-        if "women" in filename.lower():
-            text += "Women"
-        elif "men" in filename.lower():
-            text += "Men"
-        return text
-
     def update_file_paths(self, paths: list[str]) -> None:
         """
             ドロップエリアから複数パスを受け取り、テーブルに追加
@@ -688,7 +677,7 @@ class MainWindow(QMainWindow):
             if any(entry["path"] == path for entry in self.file_entries):
                 continue
             
-            event_name = self.predict_event_name(path.name)
+            event_name = predict_event_name(path.name)
             self.file_entries.append({"path": path, "event_name": event_name})
             
             row = self.file_table.rowCount()
@@ -833,7 +822,7 @@ class MainWindow(QMainWindow):
             ret = QMessageBox.warning(
                 self, "中止の確認",
                 "解析を中止しますか？\n\n"
-                "⚠️ 処理を中断すると、現在処理中の大会の\n"
+                "処理を中断すると、現在処理中の大会の\n"
                 "データはデータベースに保存されません。\n"
                 "（処理が完了したファイルは保存済みです）",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
