@@ -174,7 +174,12 @@ def match_sequential(
 
 def ensure_shot_order_column(conn: sqlite3.Connection) -> None:
     """
-    stones テーブルに shot_order カラムが無ければ追加する (既存DB向けマイグレーション)。
+    stones テーブルに shot_order カラムとインデックスが無ければ追加する (既存DB向けマイグレーション)。
+
+    カラムやインデックスを実際に追加したときだけコミットする。この関数は大会の取り込みの途中
+    ( 検出結果を INSERT した後・ストーン同定の直前 ) にも呼ばれるため、何も追加しない場合に
+    コミットしてしまうと、未コミットの検出結果まで確定され、同定中に中止しても
+    大会ごとロールバックできなくなる。
 
     Args:
         conn: SQLite 接続。
@@ -196,9 +201,11 @@ def ensure_shot_order_column(conn: sqlite3.Connection) -> None:
         logger.info("Added 'shot_order' column to stones table.")
 
     # ストーンマッチングは shot_id での絞り込みを多数回実行するため、インデックスを張る
-    # （既存DBにも冪等に適用する。IF NOT EXISTS なので二重実行しても安全）
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_stones_shot_id ON stones(shot_id)")
-    conn.commit()
+    # （既存DBにも冪等に適用する。既にある場合は何もせず、コミットもしない）
+    cur.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_stones_shot_id'")
+    if cur.fetchone() is None:
+        cur.execute("CREATE INDEX idx_stones_shot_id ON stones(shot_id)")
+        conn.commit()
 
 
 def _fetch_end_metadata(
