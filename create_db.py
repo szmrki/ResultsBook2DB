@@ -70,7 +70,7 @@ def set_tables(dbname: str | Path, is_md: bool = False) -> None:
         # 1つの DB は4人制か MD のどちらか専用 ( 混在しない ) ので、両者を同名 rosters にしても衝突しない。
         if is_md:
             # MD 版: MD の選手行は Position-Function を持たず Gender ( F/M/C ) で記載されるため、
-            # 4人制とは別の列構成にする ( 詳細は docs/event_metadata_design.md 9節 )。
+            # 4人制とは別の列構成にする。
             #   role   : 'player' / 'coach'。4人制と同じ値集合に揃える ( 補欠概念は MD に無い )。
             #   gender : 'Female' / 'Male' / NULL ( coach は性別記載なし )。role とは直交する別軸。
             #            PDF 記載は F/M だが、既存の color='red'/'yellow' 等と表記を揃え単語で持つ。

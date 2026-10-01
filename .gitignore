@@ -23,8 +23,6 @@ Output/
 logs/
 create_slides.py
 slides/
-docs/*
-!docs/flowchart.png
-!docs/build_guide.md
+notes/
 scratch/
 CLAUDE.local.md
