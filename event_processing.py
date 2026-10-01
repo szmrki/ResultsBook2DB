@@ -16,6 +16,7 @@ GUI ( worker.py の Worker ) はこの3つを続けて呼ぶ。「PDF を読む�
     progress_cb(percent, message) : 進捗率 ( 0-100 ) とメッセージを通知する
     should_stop()                 : 中断が要求されていれば True を返す
 """
+import json
 import logging
 import os
 import shutil
@@ -23,7 +24,7 @@ import sqlite3
 import sys
 import time
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from itertools import zip_longest
 from pathlib import Path
 from typing import Any, Callable
@@ -54,6 +55,9 @@ NUM2COLOR = {0: "red", 1: "yellow"}
 
 ProgressCallback = Callable[[int, str], None]
 StopCallback = Callable[[], bool]
+
+# 解析結果ファイル ( JSON ) の形式のバージョン。形式を変えたら上げる
+RESULT_FORMAT_VERSION = 1
 
 
 # ─── 解析結果の入れ物 ─────────────────────────────────────────────────────────
@@ -132,6 +136,78 @@ class EventResult:
     standings: list[tuple[int, str]] = field(default_factory=list)   # ( 順位, チームコード )
     rosters: list[dict[str, Any]] = field(default_factory=list)      # extract_rosters / extract_rosters_md の出力
     games: list[GameResult] = field(default_factory=list)
+
+
+# ─── 解析結果ファイル ( JSON ) の書き出し・読み込み ───────────────────────────
+# PDF の解析 ( extract_event ) と DB への書き込み ( write_event ) を別のマシンで行う場合に、
+# 解析結果をファイルとして受け渡すために使う。浮動小数点数は Python の json が
+# 値を変えずに書き出し・読み込みするため、ファイルを経由しても DB の内容は変わらない。
+
+def _json_default(value: Any) -> Any:
+    """
+        json が標準では書き出せない値を変換する。
+        numpy の数値 ( np.int64 など ) が混ざっていた場合に、Python の数値に直す。
+
+        Args:
+            value : json が書き出せなかった値
+
+        Returns:
+            Any : 書き出せる形に直した値
+    """
+    if hasattr(value, "item"):  # numpy のスカラー
+        return value.item()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def save_event_result(result: EventResult, path: str | Path) -> None:
+    """
+        解析結果を JSON ファイルに書き出す。
+
+        Args:
+            result : extract_event の解析結果
+            path : 書き出し先のファイルパス
+    """
+    data = {"format_version": RESULT_FORMAT_VERSION, "event": asdict(result)}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, default=_json_default)
+
+
+def load_event_result(path: str | Path) -> EventResult:
+    """
+        JSON ファイルから解析結果を読み込む。
+        JSON にはタプルが無くリストになるため、タプルだった箇所 ( 順位、事前配置石の座標 ) は
+        読み込み時にタプルへ戻す。
+
+        Args:
+            path : 解析結果ファイルのパス
+
+        Returns:
+            EventResult : 読み込んだ解析結果
+
+        Raises:
+            ValueError : ファイルの形式のバージョンが、このプログラムの対応するものと違う場合
+    """
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    if data.get("format_version") != RESULT_FORMAT_VERSION:
+        raise ValueError(f"Unsupported result format version: {data.get('format_version')} "
+                         f"(expected {RESULT_FORMAT_VERSION})")
+    ev = data["event"]
+
+    games: list[GameResult] = []
+    for g in ev.pop("games"):
+        ends: list[EndResult] = []
+        for e in g.pop("ends"):
+            shots = [ShotResult(**{**sh, "stones": [StoneResult(**st) for st in sh["stones"]]})
+                     for sh in e.pop("shots")]
+            pre = e.pop("prepositioned")
+            if pre is not None:
+                pre = [{**p, "pos": tuple(p["pos"])} for p in pre]
+            ends.append(EndResult(**e, shots=shots, prepositioned=pre))
+        lsds = [LsdResult(**lsd) for lsd in g.pop("lsds")]
+        games.append(GameResult(**g, lsds=lsds, ends=ends))
+    standings = [tuple(row) for row in ev.pop("standings")]
+    return EventResult(**ev, standings=standings, games=games)
 
 
 # ─── 1. PDF → 解析結果 ────────────────────────────────────────────────────────
