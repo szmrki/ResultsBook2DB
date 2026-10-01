@@ -9,23 +9,16 @@ import time
 import traceback
 from PySide6.QtCore import QThread, Signal
 import sqlite3
-from pdf_tools import *
-from yolo_tools import *
-from utils import *
-from detection import *
-from stone_matching import ensure_shot_order_column, label_event_ends, correct_equidistant_blank_hammer
+from event_processing import event_exists, extract_event, write_event, postprocess_event
+from stone_matching import ensure_shot_order_column
+import shutil
 import sys
-from itertools import zip_longest
 import io
 import logging
 from typing import Any
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-
-resource_path = lambda p: Path(getattr(
-    sys, '_MEIPASS', os.path.abspath(os.path.dirname(__file__))
-    )) / p
 
 class Worker(QThread):
     # メインスレッド（画面）に情報を送るための「通信線」
@@ -188,9 +181,9 @@ class Worker(QThread):
 
     def executemodel(self, pdf_path: str, tournament_name: str, prefix: str = "") -> bool:
         """
-            指定された大会フォルダ内のPDFを解析し、DBに情報を格納する。
-            解析にはYOLOモデルを使用し、必要に応じてファインチューニングも行う。
-            解析結果はSQLiteデータベースに保存される。
+            指定されたPDFを解析し、DBに情報を格納する。
+            処理の本体は event_processing の3つの関数 ( 読み取り・書き込み・後処理 ) で、
+            ここではそれらを順に呼び、進捗と中断を GUI につなぐ。
 
             Args:
                 pdf_path (str): PDFファイルのパス
@@ -201,242 +194,28 @@ class Worker(QThread):
                 bool : 処理が成功したらTrue、失敗したらFalse
         """
         game = tournament_name
-        num2color = {0: "red", 1: "yellow"}
 
-        cur = self.conn.cursor()
-        try:
-            #eventテーブルに大会名、年、カテゴリを記述
-            year, category = extract_year_and_category(game, self.is_md)
-            cur.execute('INSERT INTO events(name, year, category) VALUES (?, ?, ?)', (game, year, category))
-        except sqlite3.IntegrityError:
+        # events.name は UNIQUE のため、同名の大会は取り込めない。時間のかかる解析の前に確認する
+        if event_exists(self.conn, game):
             logger.warning(f"Duplicate event name found in database: {game}")
             return False
 
-        event_id = cur.lastrowid #event_idを取得
+        # 進捗は接頭辞 ( "[1/3] " など ) を付けて画面に送る
+        progress_cb = lambda percent, message: self.progress_signal.emit(percent, f"{prefix}{message}")
+        should_stop = self.isInterruptionRequested
 
-        doc = fitz.open(pdf_path)
-        logger.info(f"Processing PDF: {pdf_path}")
-
-        model = self._prepare_model(game, doc, prefix)
-
-        # MD版: Prepositioned stoneの座標を end_id → list[dict] のマップで蓄積する
-        prepositioned_map: dict[int, list[dict[str, Any]] | None] = {}
-        # 会場情報は複数の順位ページに同一のものが載るため、最初の順位ページで1回だけ取得する
-        venue_saved = False
-        start_time_det = time.time()
-        with pdfplumber.open(pdf_path) as pdf:
-            for pn in range(doc.page_count):
-                # 中断チェック (ページごとのループ先頭)
-                if self.isInterruptionRequested():
-                    break
-                self.progress_signal.emit(int(pn/doc.page_count*100), f"{prefix}Extracting data...")
-                page_num = pn + 1
-                page_plumber = pdf.pages[pn]
-                page_mu = doc[pn]
-                text = page_mu.get_text()
-                # 順位ページ ( is_standings_page ) の判定を最初に置く。
-                # is_standings_page は「単独行 Final Standings + 列見出し行」という
-                # 最も厳格な条件のため試合ページを誤って奪う心配が小さく、逆に順位ページの
-                # テキストに "Game Results" 等が紛れても正しく順位側に振り分けられる
-                # ( 分岐の順序依存による偽陰性を避ける )。
-                if is_standings_page(page_mu): #最終順位表のページ ( 複数ページにわたる )
-                    # 順位 ( standings ) を抽出して挿入する。順位ページは複数あるため都度追加する。
-                    for rank, team in extract_standings(page_mu):
-                        cur.execute("INSERT INTO standings(event_id, rank, team) VALUES (?, ?, ?)",
-                                    (event_id, rank, team))
-                    # 選手ロースター ( rosters ) を抽出して挿入する。順位ページ ( 複数 ) に選手行が
-                    # 分かれて載るため standings と同様に都度追加する。4人制と MD で記載フォーマットが
-                    # 異なり rosters のスキーマも is_md で分かれるため、抽出関数・挿入列を切り替える。
-                    if self.is_md:
-                        # MD 版: role / gender を持つ ( Position-Function は無い )。
-                        for r in extract_rosters_md(page_mu):
-                            cur.execute(
-                                "INSERT INTO rosters(event_id, team, player_name, role, gender) VALUES (?, ?, ?, ?, ?)",
-                                (event_id, r["team"], r["player_name"], r["role"], r["gender"]))
-                    else:
-                        # 4人制版: role / position / is_skip / is_vice を持つ。
-                        for r in extract_rosters(page_mu):
-                            cur.execute(
-                                """INSERT INTO rosters(event_id, team, player_name, role, position, is_skip, is_vice)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                                (event_id, r["team"], r["player_name"], r["role"],
-                                 r["position"], r["is_skip"], r["is_vice"]))
-                    # 会場情報 ( location / venue ) は最初の順位ページで1回だけ取得し events を更新する。
-                    # 2ページ目以降には同じ会場情報が載るため再取得はしない。
-                    if not venue_saved:
-                        location, venue = extract_venue(page_mu, game)
-                        cur.execute("UPDATE events SET location = ?, venue = ? WHERE id = ?",
-                                    (location, venue, event_id))
-                        venue_saved = True
-                        logger.info(f"[{game}] Standings page: {page_num} - location: {location}, venue: {venue}")
-
-                elif "Game Results" in text: #新たな試合
-                    if self.is_md:
-                        scores, power_play_ends = extract_game_result(page_plumber, self.is_md) #得点表のdfとPPエンドのリスト
-                    else:
-                        scores = extract_game_result(page_plumber) #得点表のdf
-                    
-                    hammers = get_hammer(scores, self.is_md)  #各エンドのハンマー情報
-                    team_red = scores.at[0, "team"]
-                    team_yellow = scores.at[1, "team"]
-                    game_context = f"{team_red} vs {team_yellow}"
-                    logger.debug(f"Scores:\n{scores}")
-                    logger.debug(f"Hammers: {hammers}")
-                    logger.info(f"[{game_context}] - Game Results page: {page_num}")
-                    try:
-                        fin_red = int(scores.at[0, "Total"]) #得点表のdfから最終得点を記録
-                        fin_yellow = int(scores.at[1, "Total"])
-                    except (ValueError, TypeError):
-                        logger.warning(f"[{game_context}] Could not parse final scores from page {page_num}")
-                        fin_red = None
-                        fin_yellow = None
-                    
-                    # DB には3文字コードのみを保存する ( 国名部分の表記揺れを防ぐ )。
-                    # team_red / team_yellow 変数自体は LSFE 照合や LSD 紐付けで
-                    # フルネームのまま使うため、INSERT に渡す値だけ変換する。
-                    team_red_code = to_team_code(team_red)
-                    team_yellow_code = to_team_code(team_yellow)
-                    cur.execute("""INSERT INTO games(event_id, page, team_red, team_yellow,
-                                    final_score_red, final_score_yellow) VALUES (?, ?, ?, ?, ?, ?)""",
-                                    (event_id, page_num, team_red_code, team_yellow_code, fin_red, fin_yellow))
-                    game_id = cur.lastrowid #game_idを取得
-
-                    # --- LSDデータを抽出・保存 ---
-                    plumber_text = page_plumber.extract_text()
-                    if plumber_text:
-                        lsd_results = extract_lsd_from_text(plumber_text)
-                        for lsd in lsd_results:
-                            if lsd["player_red"] and lsd["lsd_red"] is not None:
-                                cur.execute("INSERT INTO lsds (game_id, team, player_name, distance_cm) VALUES (?, ?, ?, ?)",
-                                            (game_id, team_red_code, lsd["player_red"], lsd["lsd_red"]))
-                            if lsd["player_yellow"] and lsd["lsd_yellow"] is not None:
-                                cur.execute("INSERT INTO lsds (game_id, team, player_name, distance_cm) VALUES (?, ?, ?, ?)",
-                                            (game_id, team_yellow_code, lsd["player_yellow"], lsd["lsd_yellow"]))
-
-                    # ---------------------------
-                    # ここでエンドテーブルに情報を一括挿入
-                    ends_data = []
-                    for i in range(len(hammers)):
-                        if hammers[i] == None: break #コンシード済みのため
-                        num_end_val = i + 1
-                        str_end = str(num_end_val)
-                        try:
-                            score_red = int(scores.at[0, str_end]) #得点表のdfから得点を取得
-                            score_yellow = int(scores.at[1, str_end])
-                        except Exception:
-                            score_red = None #存在しない場合はNULL
-                            score_yellow = None
-                        
-                        try:
-                            color_hammer = num2color[hammers[i]]
-                        except Exception:
-                            color_hammer = None
-                        
-                        # (game_id, page, number, color_hammer, score_red, score_yellow, [is_power_play])
-                        # 初期段階では page は None
-                        if self.is_md:
-                            # Power Play情報の抽出ロジック
-                            is_power_play = 1 if num_end_val in power_play_ends else 0
-                            ends_data.append((game_id, None, num_end_val, color_hammer, score_red, score_yellow, is_power_play))
-                        else:
-                            ends_data.append((game_id, None, num_end_val, color_hammer, score_red, score_yellow))
-                        
-                    if self.is_md:
-                        cur.executemany("""INSERT INTO ends(game_id, page, number, color_hammer, 
-                                        score_red, score_yellow, is_power_play) VALUES (?, ?, ?, ?, ?, ?, ?)""", ends_data)
-                    else:
-                        cur.executemany("""INSERT INTO ends(game_id, page, number, color_hammer, 
-                                        score_red, score_yellow) VALUES (?, ?, ?, ?, ?, ?)""", ends_data)
-                    
-                    num_end = 1
-
-                elif "Shot by Shot" in text: #新たなエンド
-                    # 該当するエンドのページ情報を更新し、end_idを取得
-                    cur.execute("""UPDATE ends SET page = ? WHERE game_id = ? AND number = ?""", 
-                                (page_num, game_id, num_end))
-                    cur.execute("""SELECT id FROM ends WHERE game_id = ? AND number = ?""", 
-                                (game_id, num_end))
-                    end_id = cur.fetchone()[0]
-                    
-                    stones_end, shot_info, pre_stones_np = extract_shotbyshot(doc, page_mu, model, self.is_md)
-                    logger.info(f"[{game_context}] End {num_end} - Shot-by-Shot page: {page_num} - Number of shots: {max(len(stones_end), len(shot_info))}")
-
-                    # MD版: Prepositioned stone座標をマッチング用の辞書形式に変換して蓄積
-                    if self.is_md:
-                        if pre_stones_np is not None:
-                            pre_stone_dicts: list[dict[str, Any]] = []
-                            for row in pre_stones_np:
-                                if row[5] == 1:  # insheet フラグが立っている行のみ
-                                    pre_stone_dicts.append({
-                                        'color': num2color[int(row[0])],
-                                        'pos': (float(row[1]), float(row[2])),
-                                        'label': 0,  # Prepositioned stone は shot_order=0
-                                    })
-                            # 有効なストーンが取れた場合のみマップに登録、取れなかった場合はNone
-                            prepositioned_map[end_id] = pre_stone_dicts if pre_stone_dicts else None
-                        else:
-                            # MD版だがPrepositioned stone画像がなかった → スキップ対象
-                            prepositioned_map[end_id] = None
-
-                    for shot_num, (stones, info) in enumerate(zip_longest(stones_end, shot_info), start=1):
-                        if info is not None: #正常時
-                            shot_type = info["type"]; percent_score = info["score"]
-                            turn = info["turn"]; team = info["team"]; player_name = info["player"]      
-                        else: #ショット情報が取れない場合はNULLを挿入し、ストーン配置のみ保存する
-                            shot_type = None; percent_score = None
-                            turn = None; team = None; player_name = None
-                            logger.warning(f"[{game_context}] End {num_end} - Shot {shot_num} - Shot info not found")
-
-                        try:
-                            shot_color = num2color[(hammers[num_end - 1] + (shot_num % 2)) % 2] #現在のショットの色を指定
-                        except (TypeError, IndexError):
-                            logger.warning(f"[{game_context}] End {num_end} - Shot {shot_num} - Shot color not found")
-                            shot_color = None
-                        cur.execute("""INSERT INTO shots(end_id, number, color, team, player_name, 
-                                            type, turn, percent_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", 
-                                            (end_id, shot_num, shot_color, team, player_name, 
-                                            shot_type, turn, percent_score))    
-                        shot_id = cur.lastrowid #shot_idを取得
-
-                        if stones is not None: #正常時
-                            rows = [(shot_id, num2color[int(row[0])], *row[1:]) for row in stones if row[5] == 1]
-                        else: #ストーン情報が取れない場合
-                            rows = []
-
-                        if len(rows) == 0: #ストーンが存在しない場合はidのみ
-                            rows = [(shot_id, None, None, None, None, None, None)]
-                        #ストーンはまとめてinsert
-                        cur.executemany("""INSERT INTO stones (shot_id, color, x, y, distance_from_center,  
-                                        inhouse, insheet) VALUES (?, ?, ?, ?, ?, ?, ?)""", rows)
-                    num_end += 1
-                    #break
-                else:
-                    continue
-        doc.close()
-        # 検出途中で中断された場合はコミットせず、run側のロールバックに委ねる (大会ごと破棄)
-        if self.isInterruptionRequested():
+        # 1. PDF → 解析結果 ( DB には触れない )
+        result = extract_event(pdf_path, game, self.is_md, progress_cb, should_stop)
+        # 検出途中で中断された場合は何も書き込まず、run側のロールバックに委ねる (大会ごと破棄)
+        if result is None:
             return True
-        elapsed_det = time.time() - start_time_det
-        logger.info(f"[{game}] Detection complete (took {elapsed_det:.2f}s).")
-        # MD版: 同距離ブランクエンド ( ハウス内に両チームの石が残った膠着ブランク ) では
-        # 先攻後攻が交代しないため、get_hammer が入れた誤った交代を打ち消す。
-        # 同定は color_hammer を色制約に使うため、補正は同定より前に行う。
-        if self.is_md:
-            corrected = correct_equidistant_blank_hammer(self.conn, event_id)
-            if corrected:
-                logger.info(f"[{game}] Equidistant-blank hammer correction: {corrected} ends updated.")
-        # ストーン同定: この大会の全エンドについて各石の投球元(shot_order)を特定する
-        self.progress_signal.emit(0, f"{prefix}Matching stones...")
+
+        # 2. 解析結果 → SQLite
+        event_id, prepositioned_map = write_event(self.conn, result)
+
+        # 3. DB 上の後処理 ( MD のハンマー補正 + ストーン同定 )
         start_time_match = time.time()
-        updated = label_event_ends(
-            self.conn, event_id,
-            progress_cb=lambda done, total: self.progress_signal.emit(
-                int(done / total * 100) if total else 100,
-                f"{prefix}Matching stones... ({done}/{total})"
-            ),
-            should_stop=self.isInterruptionRequested,  # 同定中も中止を受け付けて打ち切る
-            prepositioned_map=prepositioned_map if self.is_md else None,
-        )
+        updated = postprocess_event(self.conn, event_id, self.is_md, prepositioned_map, progress_cb, should_stop)
         # 同定中に中断された場合も、検出結果ごとコミットせず run側のロールバックに委ねる。
         # 検出+同定が揃って初めて1大会としてコミットすることで、shot_order=NULL の
         # 中途半端な状態を残さず「大会ごと破棄」に一本化する。
@@ -446,104 +225,3 @@ class Worker(QThread):
                     f"(took {time.time() - start_time_match:.2f}s).")
         self.conn.commit()  # 検出結果と同定結果をまとめてコミット
         return True
-
-    def _prepare_model(self, game: str, doc, prefix: str) -> "YOLO":
-        """ファインチューニング済みモデルが存在すればロード、なければ疑似ラベルでFTして保存する。"""
-        work_dir = Path.cwd()
-        model_dir = resource_path(Path("complete_model"))
-        game_pt = model_dir / f"{game}.pt"
-
-        if not game_pt.exists():
-            start_time_ft = time.time()
-            self.progress_signal.emit(0, f"{prefix}Preparing fine-tuning...")
-
-            base_model_path = resource_path(model_dir / "base.pt")
-            if not base_model_path.exists():
-                raise FileNotFoundError(f"Base model not found at {base_model_path}. Please ensure 'complete_model/base.pt' exists.")
-
-            model = YOLO(base_model_path)
-
-            dataset_dir = work_dir / "yolo_dataset"
-            image_dir = dataset_dir / "images"
-            label_dir = dataset_dir / "labels"
-            yaml_path = work_dir / "yaml" / "data.yaml"
-
-            try:
-                num_images = save_images(doc, output_dir=image_dir, save_num=400)
-                num_labels = create_pseudo_label(model, image_dir=image_dir, output_dir=label_dir, threshold=0.75)
-                logger.info(f"Dataset prepared: {num_labels} pseudo labels from {num_images} images.")
-                split_train_val(image_dir, label_dir, train_ratio=0.8)
-                create_yaml(yaml_path, dataset_dir)
-            except Exception as e:
-                logger.error(f"Failed to prepare dataset for fine-tuning: {e}")
-                raise
-
-            def on_train_epoch_end(trainer):
-                curr = trainer.epoch + 1
-                total = trainer.epochs
-                self.progress_signal.emit(int(curr / total * 100), f"{prefix}Fine-tuning...")
-                if self.isInterruptionRequested():
-                    trainer.stop = True
-
-            model.add_callback("on_train_epoch_end", on_train_epoch_end)
-
-            try:
-                logger.info(f"Starting fine-tuning for event: {game}")
-                results = model.train(
-                    data=resource_path(yaml_path),
-                    epochs=50,
-                    imgsz=600,
-                    iou=0.3,
-                    conf=0.5,
-                    save=True,
-                    name=game,
-                    exist_ok=False,
-                    workers=0,
-                    patience=10,
-                )
-                final_epoch = model.trainer.epoch + 1
-                if not self.isInterruptionRequested():
-                    if results and hasattr(results, 'results_dict'):
-                        map50 = results.results_dict.get('metrics/mAP50(B)', 'N/A')
-                        map50_95 = results.results_dict.get('metrics/mAP50-95(B)', 'N/A')
-                        precision = results.results_dict.get('metrics/precision(B)', 'N/A')
-                        recall = results.results_dict.get('metrics/recall(B)', 'N/A')
-                        logger.info(f"Fine-tuning complete. Results: mAP50={map50:.6f}, mAP50-95={map50_95:.6f}, Precision={precision:.6f}, Recall={recall:.6f}")
-                    else:
-                        logger.info("Fine-tuning complete. Accuracy metrics not available.")
-            except Exception as e:
-                logger.error(f"Fine-tuning failed for event '{game}': {e}")
-                logger.error(traceback.format_exc())
-                model.clear_callback("on_train_epoch_end")
-                raise
-
-            if not self.isInterruptionRequested():
-                Path(game_pt).unlink(missing_ok=True)
-                try:
-                    save_dir = Path(model.trainer.save_dir)
-                    best_pt = save_dir / "weights" / "best.pt"
-                    shutil.copy2(best_pt, game_pt)
-                    logger.info(f"Successfully saved fine-tuned model from {best_pt} as {game_pt.name}")
-                except Exception as e:
-                    logger.warning(f"Could not copy best.pt to {game_pt.name}: {e}. Attempting direct save.")
-                    try:
-                        model.save(game_pt)
-                    except Exception as save_e:
-                        logger.error(f"Failed to save model directly: {save_e}")
-                        raise
-
-            try:
-                delete_files(image_dir / "train")
-                delete_files(label_dir / "train")
-                delete_files(image_dir / "val")
-                delete_files(label_dir / "val")
-            except Exception as e:
-                logger.warning(f"Failed to clean up dataset directories: {e}")
-
-            model.clear_callback("on_train_epoch_end")
-            if not self.isInterruptionRequested():
-                elapsed_ft = time.time() - start_time_ft
-                logger.info(f"[{game}] Fine-tuning complete ({final_epoch} epochs) (took {elapsed_ft:.2f}s).")
-                self.progress_signal.emit(100, f"{prefix}Fine-tuning complete.")
-
-        return YOLO(game_pt)
