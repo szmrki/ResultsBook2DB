@@ -522,7 +522,7 @@ class MainWindow(QMainWindow):
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         
         def open_guide():
-            guide_url = "https://github.com/szmrki/ResultsBook2DB/blob/main/BUILD_GUIDE.md#アップデート時の手順"
+            guide_url = "https://github.com/szmrki/ResultsBook2DB/blob/main/docs/build_guide.md#アップデート時の手順"
             webbrowser.open(guide_url)
                 
         btn.clicked.connect(open_guide)

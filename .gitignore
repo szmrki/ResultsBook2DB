@@ -25,5 +25,6 @@ create_slides.py
 slides/
 docs/*
 !docs/flowchart.png
+!docs/build_guide.md
 scratch/
 CLAUDE.local.md

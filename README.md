@@ -24,11 +24,11 @@
 
 GitHub の [Releases](https://github.com/szmrki/ResultsBook2DB/releases) から最新の実行ファイル（`.7z`）をダウンロードできます。
 
-* **GPUについて**: 配布版は CUDA 12.8 用です。認識されない場合は [BUILD_GUIDE.md](BUILD_GUIDE.md) を参照しビルドしてください。
+* **GPUについて**: 配布版は CUDA 12.8 用です。認識されない場合は [docs/build_guide.md](docs/build_guide.md) を参照しビルドしてください。
 
 ### macOS / Linux 版
 
-[BUILD_GUIDE.md](BUILD_GUIDE.md) を参照してビルドしてください。
+[docs/build_guide.md](docs/build_guide.md) を参照してビルドしてください。
 
 ## 使用方法
 
