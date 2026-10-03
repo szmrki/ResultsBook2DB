@@ -40,7 +40,7 @@ from pdf_tools import (
     is_standings_page, save_images,
 )
 from prepositioned import correct_prepositioned_stones
-from stone_matching import correct_equidistant_blank_hammer, label_event_ends
+from stone_matching import MD_PROTECTED_SHOTS, correct_equidistant_blank_hammer, label_event_ends
 from utils import delete_files, get_hammer, to_team_code
 from yolo_tools import create_yaml, split_train_val
 
@@ -715,4 +715,6 @@ def postprocess_event(conn: sqlite3.Connection, event_id: int, is_md: bool,
         ),
         should_stop=should_stop,  # 同定中も中止を受け付けて打ち切る
         prepositioned_map=prepositioned_map if is_md else None,
+        # MD は3投目まで石を外に出せないので、その間は退出を最後の手段にする
+        protected_shots=MD_PROTECTED_SHOTS if is_md else 0,
     )

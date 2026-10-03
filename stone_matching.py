@@ -14,7 +14,7 @@ DBに保存された各ショット後のストーン座標を用いて、
 
 同定結果は stones テーブルの shot_order カラムに書き戻す。
     - 正の値(1〜16): 何投目に投げられたか (= shots.number と同じドメイン)
-    - 0             : MD の事前配置石 ( 投球された石ではない )
+    - 0             : MD の事前配置石
     - 負の値        : ハンマールール等の制約に反した要確認のケース (-shot_num)
     - NULL          : 座標が無い行 (x/y が NULL のプレースホルダ行) は対象外
 
@@ -34,6 +34,18 @@ logger = logging.getLogger(__name__)
 EXIT_THRESHOLD = 2.0       # 既存ストーンが盤面から退出したとみなすコスト
 ARRIVAL_THRESHOLD = 1.5    # 新しいストーンが新規参入（シューター）とみなすコスト
 DIRECTION_TOLERANCE = 0.07  # y方向の逆走を許容する量（これ以内なら逆走とみなさない）
+
+# --- MD ( 混合ダブルス ) の序盤の扱い ---
+# MD では、エンド開始から3投目 ( 先攻2投・後攻1投 ) までは、どの石もプレイエリアの外に出してはならない。
+# そのため、この間は「既存の石が退出した」という判定を最後の手段にする。
+MD_PROTECTED_SHOTS = 3
+# 保護されている投球で使う退出コスト。盤面上のどんな移動距離 ( 最大でも 10 m 程度 ) よりも大きく、
+# 禁止を表すコスト ( 1e9 ) よりは小さい値にする。これにより、
+#   - 移動として説明できる石が1つでもあれば、どれだけ遠くても「動いた」と判定し、
+#   - 対応できる石が1つも無いとき ( 色違い・逆走しか無い ) に限って「退出した」と判定する。
+# 通常の EXIT_THRESHOLD のままだと、1投で 3.5 m ( 退出 2.0 + 新規 1.5 ) を超えて弾かれた石が
+# 「退出して、別の石が新しく来た」と判定されてしまう。
+LAST_RESORT_EXIT_COST = 100.0
 
 
 def match_sequential(
@@ -279,6 +291,7 @@ def label_end(
     conn: sqlite3.Connection,
     end_id: int,
     initial_stones: list[dict[str, Any]] | None = None,
+    protected_shots: int = 0,
 ) -> int:
     """
     1エンド分のストーンを同定し、stones.shot_order を更新する。
@@ -288,6 +301,9 @@ def label_end(
         end_id: 対象エンドのID。
         initial_stones: MD版の Prepositioned stone (label=0 付き) を初期 active_stones として
             セットする場合に指定する。None の場合は空リストから開始する (4人制の通常動作)。
+        protected_shots: エンド開始から何投目までを「石を外に出せない投球」として扱うか。
+            この間は既存の石の退出を最後の手段にし、退出が起きた場合は警告ログを出す。
+            0 の場合は全投球を通常どおり扱う (4人制の通常動作)。MD では MD_PROTECTED_SHOTS を渡す。
 
     Returns:
         int: 更新したストーン行数。
@@ -310,10 +326,22 @@ def label_end(
     updated = 0
     for shot_id, number, _color in shots:
         current_stones = _fetch_stones(conn, shot_id)
-        active_stones, _exited = match_sequential(
+        # 石を外に出せない投球では、退出を最後の手段にする ( 遠くへ弾かれた石を見失わないため )
+        protected = number <= protected_shots
+        active_stones, exited = match_sequential(
             active_stones, current_stones, number,
-            color_hammer=color_hammer, log_context=log_context,
+            color_hammer=color_hammer,
+            exit_threshold=LAST_RESORT_EXIT_COST if protected else EXIT_THRESHOLD,
+            log_context=log_context,
         )
+        if protected and exited:
+            # 対応できる石が1つも無かった。ルール違反で実際に石が出された、図が誤っている、
+            # 検出漏れ、などが考えられるので、後から確認できるようにログに残す
+            lost = [(s['color'], round(s['pos'][0], 2), round(s['pos'][1], 2), s['label']) for s in exited]
+            logger.warning(
+                f"{log_context}Shot {number}: Stone(s) left play although removal is not allowed "
+                f"in the first {protected_shots} shots: {lost} (color, x, y, shot_order)"
+            )
         # 今回の局面に存在する各ストーンに、確定したラベルを書き込む
         for s in current_stones:
             cur.execute(
@@ -331,6 +359,7 @@ def label_event_ends(
     progress_cb: Callable[[int, int], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     prepositioned_map: dict[int, list[dict[str, Any]] | None] | None = None,
+    protected_shots: int = 0,
 ) -> int:
     """
     1イベント (大会) 配下の全エンドを同定する。worker からの呼び出し用。
@@ -346,6 +375,8 @@ def label_event_ends(
         prepositioned_map: MD版で end_id → Prepositioned stone (label=0 付き辞書リスト) の
             マッピング。値が None のエンドは置石検出不可のためストーンマッチングをスキップする
             (shot_order は全て NULL のまま)。マップ自体が None なら4人制として全エンド処理。
+        protected_shots: 各エンドの開始から何投目までを「石を外に出せない投球」として扱うか
+            ( label_end を参照 )。MD では MD_PROTECTED_SHOTS、4人制では 0 を渡す。
 
     Returns:
         int: 更新したストーン行数の合計（打ち切られた場合は途中までの合計）。
@@ -385,7 +416,7 @@ def label_event_ends(
 
         # 1エンドの同定失敗で大会全体を巻き込まないよう、エンド単位で保護する
         try:
-            total += label_end(conn, end_id, initial_stones=initial_stones)
+            total += label_end(conn, end_id, initial_stones=initial_stones, protected_shots=protected_shots)
         except Exception:
             logger.exception(f"Stone matching failed for end_id={end_id}")
         if progress_cb is not None:
