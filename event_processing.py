@@ -39,7 +39,8 @@ from pdf_tools import (
     extract_shotbyshot, extract_standings, extract_venue, extract_year_and_category,
     is_standings_page, save_images,
 )
-from stone_matching import correct_equidistant_blank_hammer, label_event_ends
+from prepositioned import correct_prepositioned_stones
+from stone_matching import MD_PROTECTED_SHOTS, correct_equidistant_blank_hammer, label_event_ends
 from utils import delete_files, get_hammer, to_team_code
 from yolo_tools import create_yaml, split_train_val
 
@@ -57,7 +58,9 @@ ProgressCallback = Callable[[int, str], None]
 StopCallback = Callable[[], bool]
 
 # 解析結果ファイル ( JSON ) の形式のバージョン。形式を変えたら上げる
-RESULT_FORMAT_VERSION = 1
+#   1 : 最初の形式
+#   2 : MD の事前配置石を、通常の石と同じ項目 ( 距離・ハウス内・シート内 ) で持つようにした ( issue #15 )
+RESULT_FORMAT_VERSION = 2
 
 
 # ─── 解析結果の入れ物 ─────────────────────────────────────────────────────────
@@ -99,9 +102,10 @@ class EndResult:
     page: int | None = None           # Shot by Shot のページ番号
     shots: list[ShotResult] = field(default_factory=list)
     # MD で Shot by Shot のページを処理したエンドのみ True。このとき prepositioned に
-    # 事前配置石 ( 取れなかった場合は None ) が入る。ストーン同定に渡すマップの元になる。
+    # 事前配置石 ( 取れなかった場合は None ) が入る。ストーン同定に渡すマップの元になり、
+    # DB にも「1投目より前の盤面」として保存する。
     has_prepositioned_info: bool = False
-    prepositioned: list[dict[str, Any]] | None = None
+    prepositioned: list[StoneResult] | None = None
 
 
 @dataclass
@@ -175,7 +179,7 @@ def save_event_result(result: EventResult, path: str | Path) -> None:
 def load_event_result(path: str | Path) -> EventResult:
     """
         JSON ファイルから解析結果を読み込む。
-        JSON にはタプルが無くリストになるため、タプルだった箇所 ( 順位、事前配置石の座標 ) は
+        JSON にはタプルが無くリストになるため、タプルだった箇所 ( 順位 ) は
         読み込み時にタプルへ戻す。
 
         Args:
@@ -202,7 +206,7 @@ def load_event_result(path: str | Path) -> EventResult:
                      for sh in e.pop("shots")]
             pre = e.pop("prepositioned")
             if pre is not None:
-                pre = [{**p, "pos": tuple(p["pos"])} for p in pre]
+                pre = [StoneResult(**p) for p in pre]
             ends.append(EndResult(**e, shots=shots, prepositioned=pre))
         lsds = [LsdResult(**lsd) for lsd in g.pop("lsds")]
         games.append(GameResult(**g, lsds=lsds, ends=ends))
@@ -361,20 +365,17 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
                 stones_end, shot_info, pre_stones_np = extract_shotbyshot(doc, page_mu, model, is_md)
                 logger.info(f"[{game_context}] End {num_end} - Shot-by-Shot page: {page_num} - Number of shots: {max(len(stones_end), len(shot_info))}")
 
-                # MD版: Prepositioned stone座標をマッチング用の辞書形式に変換して保持する
+                # MD版: Prepositioned stone を、通常の石と同じ形 ( StoneResult ) で保持する
                 if is_md:
                     end.has_prepositioned_info = True
                     if pre_stones_np is not None:
-                        pre_stone_dicts: list[dict[str, Any]] = []
-                        for row in pre_stones_np:
-                            if row[5] == 1:  # insheet フラグが立っている行のみ
-                                pre_stone_dicts.append({
-                                    'color': NUM2COLOR[int(row[0])],
-                                    'pos': (float(row[1]), float(row[2])),
-                                    'label': 0,  # Prepositioned stone は shot_order=0
-                                })
+                        pre_stones = [
+                            StoneResult(color=NUM2COLOR[int(row[0])], x=float(row[1]), y=float(row[2]),
+                                        distance_from_center=float(row[3]), inhouse=int(row[4]), insheet=int(row[5]))
+                            for row in pre_stones_np if row[5] == 1
+                        ]
                         # 有効なストーンが取れた場合のみ保持、取れなかった場合はNone
-                        end.prepositioned = pre_stone_dicts if pre_stone_dicts else None
+                        end.prepositioned = pre_stones if pre_stones else None
                     else:
                         # MD版だがPrepositioned stone画像がなかった → スキップ対象
                         end.prepositioned = None
@@ -411,6 +412,13 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
     # 検出途中で中断された場合は結果を返さない ( 呼び出し側で大会ごと破棄する )
     if stopped():
         return None
+
+    # MD版: 事前配置石の図の誤り ( 1投目の石の混入・色が逆 ) を補正する。
+    # 同じ試合の他のエンドや1投目の盤面と照らし合わせるため、全ページを読み終えてから行う。
+    if is_md:
+        for g in result.games:
+            correct_prepositioned_stones(g, f"{game} | {g.team_red} vs {g.team_yellow}")
+
     elapsed_det = time.time() - start_time_det
     logger.info(f"[{game}] Detection complete (took {elapsed_det:.2f}s).")
     return result
@@ -561,6 +569,9 @@ def write_event(conn: sqlite3.Connection, result: EventResult) -> tuple[int, dic
         ID ( AUTOINCREMENT ) はテーブルごとに INSERT した順に振られるため、順番を保つことで
         常に同じ ID になる。
 
+        MD では、事前配置石が取れたエンドごとに number=0 の shot を1つ作り、その下に
+        事前配置石 ( shot_order=0 ) を保存する。エンド内では 1投目の shot より先に INSERT する。
+
         Args:
             conn : SQLite の接続
             result : extract_event の解析結果
@@ -624,7 +635,21 @@ def write_event(conn: sqlite3.Connection, result: EventResult) -> tuple[int, dic
             end_id = cur.lastrowid #end_idを取得
 
             if end.has_prepositioned_info:
-                prepositioned_map[end_id] = end.prepositioned
+                # 同定の起点にする形 ( 色・座標・ラベル ) に直す。事前配置石のラベル ( shot_order ) は 0
+                prepositioned_map[end_id] = (
+                    [{'color': s.color, 'pos': (s.x, s.y), 'label': 0} for s in end.prepositioned]
+                    if end.prepositioned else None
+                )
+
+            # MD版: stones は必ずどれかの shot にぶら下がるため、事前配置石用に、投球ではない number=0 の shot を作る。
+            if end.prepositioned:
+                cur.execute("INSERT INTO shots(end_id, number) VALUES (?, 0)", (end_id,))
+                pre_shot_id = cur.lastrowid
+                # shot_order は同定を通さず、ここで 0 ( = 事前配置石 ) を直接入れる
+                cur.executemany("""INSERT INTO stones (shot_id, color, x, y, distance_from_center,
+                                inhouse, insheet, shot_order) VALUES (?, ?, ?, ?, ?, ?, ?, 0)""",
+                                [(pre_shot_id, s.color, s.x, s.y, s.distance_from_center, s.inhouse, s.insheet)
+                                 for s in end.prepositioned])
 
             for shot in end.shots:
                 cur.execute("""INSERT INTO shots(end_id, number, color, team, player_name,
@@ -686,4 +711,5 @@ def postprocess_event(conn: sqlite3.Connection, event_id: int, is_md: bool,
         ),
         should_stop=should_stop,  # 同定中も中止を受け付けて打ち切る
         prepositioned_map=prepositioned_map if is_md else None,
+        protected_shots=MD_PROTECTED_SHOTS if is_md else 0,
     )
