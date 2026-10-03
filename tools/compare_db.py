@@ -11,8 +11,7 @@ compare_db.py: 2つの SQLite DB の中身が同じかどうかを比較する�
 行の対応づけ方は2通りある。
     既定           : rowid ( ID ) で対応づける。ID まで含めて完全に一致することを確かめる。
     --by-content   : ID ではなく内容 ( 大会名・試合のページ・エンド番号・投球番号 ) で対応づける。
-                     行の追加で ID がずれる変更 ( 例: issue #15 で MD の各エンドに number=0 の
-                     shot を足す ) の前後を比べるときに使う。どのエンドが変わったかも一覧で表示する。
+                     行の追加で ID がずれる変更の前後を比べるときに使う。どのエンドが変わったかも一覧で表示する。
 
 使い方:
     uv run python tools/compare_db.py db/golden/before/WJCC2022Men.db db/golden/after/WJCC2022Men.db
@@ -188,14 +187,14 @@ def load_by_content(conn: sqlite3.Connection, tables: list[str]) -> dict[str, tu
         seq: Counter = Counter()
         for row in conn.execute(f'SELECT * FROM "{table}" ORDER BY id'):
             rec = dict(zip(cols, row))
-            # 親の行が見つからない場合 ( 通常は起きない ) は、親の ID をそのままキーに使う
+            # 親の行が見つからない場合は、親の ID をそのままキーに使う
             parent_key = id_to_key[parent[0]].get(rec[fk_col], ("?", rec[fk_col])) if parent else ()
             if own_col is not None:
                 key = parent_key + (rec[own_col],)
             else:
                 key = parent_key + (seq[parent_key],)
                 seq[parent_key] += 1
-            # 同じキーの行が既にある場合 ( 通常は起きない ) は、番号を付けて区別する
+            # 同じキーの行が既にある場合は、番号を付けて区別する
             n_dup = 1
             base_key = key
             while key in rows:

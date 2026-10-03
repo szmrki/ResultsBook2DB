@@ -250,8 +250,6 @@ def _fetch_shots_for_end(conn: sqlite3.Connection, end_id: int) -> list[tuple[in
     """エンド内のショットを投球順に取得する。
 
     MD の number=0 の shot ( 事前配置石の盤面。投球ではない ) は含めない。
-    事前配置石は同定の起点 ( initial_stones ) として別に渡され、shot_order も
-    保存時に 0 が入っているため、同定の対象にする必要がない。
 
     Args:
         conn: SQLite 接続。
@@ -326,7 +324,6 @@ def label_end(
     updated = 0
     for shot_id, number, _color in shots:
         current_stones = _fetch_stones(conn, shot_id)
-        # 石を外に出せない投球では、退出を最後の手段にする ( 遠くへ弾かれた石を見失わないため )
         protected = number <= protected_shots
         active_stones, exited = match_sequential(
             active_stones, current_stones, number,
@@ -335,8 +332,7 @@ def label_end(
             log_context=log_context,
         )
         if protected and exited:
-            # 対応できる石が1つも無かった。ルール違反で実際に石が出された、図が誤っている、
-            # 検出漏れ、などが考えられるので、後から確認できるようにログに残す
+            # 後から確認できるようにログに残す
             lost = [(s['color'], round(s['pos'][0], 2), round(s['pos'][1], 2), s['label']) for s in exited]
             logger.warning(
                 f"{log_context}Shot {number}: Stone(s) left play although removal is not allowed "
@@ -375,8 +371,7 @@ def label_event_ends(
         prepositioned_map: MD版で end_id → Prepositioned stone (label=0 付き辞書リスト) の
             マッピング。値が None のエンドは置石検出不可のためストーンマッチングをスキップする
             (shot_order は全て NULL のまま)。マップ自体が None なら4人制として全エンド処理。
-        protected_shots: 各エンドの開始から何投目までを「石を外に出せない投球」として扱うか
-            ( label_end を参照 )。MD では MD_PROTECTED_SHOTS、4人制では 0 を渡す。
+        protected_shots: label_end にそのまま渡す ( 意味は label_end を参照 )。
 
     Returns:
         int: 更新したストーン行数の合計（打ち切られた場合は途中までの合計）。

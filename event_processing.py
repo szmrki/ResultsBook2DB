@@ -369,7 +369,6 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
                 if is_md:
                     end.has_prepositioned_info = True
                     if pre_stones_np is not None:
-                        # insheet フラグが立っている行のみ石として保持する
                         pre_stones = [
                             StoneResult(color=NUM2COLOR[int(row[0])], x=float(row[1]), y=float(row[2]),
                                         distance_from_center=float(row[3]), inhouse=int(row[4]), insheet=int(row[5]))
@@ -642,10 +641,7 @@ def write_event(conn: sqlite3.Connection, result: EventResult) -> tuple[int, dic
                     if end.prepositioned else None
                 )
 
-            # MD版: 事前配置石を「1投目より前の盤面」として保存する ( issue #15 ) 。
-            # stones は必ずどれかの shot にぶら下がるため、投球ではない number=0 の shot を1つ作り、
-            # その下に入れる。投球に由来する列 ( color / team / player_name / type / turn /
-            # percent_score ) はすべて NULL にする。事前配置石が取れなかったエンドでは作らない。
+            # MD版: stones は必ずどれかの shot にぶら下がるため、事前配置石用に、投球ではない number=0 の shot を作る。
             if end.prepositioned:
                 cur.execute("INSERT INTO shots(end_id, number) VALUES (?, 0)", (end_id,))
                 pre_shot_id = cur.lastrowid
@@ -715,6 +711,5 @@ def postprocess_event(conn: sqlite3.Connection, event_id: int, is_md: bool,
         ),
         should_stop=should_stop,  # 同定中も中止を受け付けて打ち切る
         prepositioned_map=prepositioned_map if is_md else None,
-        # MD は3投目まで石を外に出せないので、その間は退出を最後の手段にする
         protected_shots=MD_PROTECTED_SHOTS if is_md else 0,
     )
