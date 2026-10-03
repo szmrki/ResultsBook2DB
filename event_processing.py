@@ -39,6 +39,7 @@ from pdf_tools import (
     extract_shotbyshot, extract_standings, extract_venue, extract_year_and_category,
     is_standings_page, save_images,
 )
+from prepositioned import correct_prepositioned_stones
 from stone_matching import correct_equidistant_blank_hammer, label_event_ends
 from utils import delete_files, get_hammer, to_team_code
 from yolo_tools import create_yaml, split_train_val
@@ -412,6 +413,13 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
     # 検出途中で中断された場合は結果を返さない ( 呼び出し側で大会ごと破棄する )
     if stopped():
         return None
+
+    # MD版: 事前配置石の図の誤り ( 1投目の石の混入・色が逆 ) を補正する。
+    # 同じ試合の他のエンドや1投目の盤面と照らし合わせるため、全ページを読み終えてから行う。
+    if is_md:
+        for g in result.games:
+            correct_prepositioned_stones(g, f"{game} | {g.team_red} vs {g.team_yellow}")
+
     elapsed_det = time.time() - start_time_det
     logger.info(f"[{game}] Detection complete (took {elapsed_det:.2f}s).")
     return result
