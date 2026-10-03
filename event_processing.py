@@ -57,7 +57,9 @@ ProgressCallback = Callable[[int, str], None]
 StopCallback = Callable[[], bool]
 
 # 解析結果ファイル ( JSON ) の形式のバージョン。形式を変えたら上げる
-RESULT_FORMAT_VERSION = 1
+#   1 : 最初の形式
+#   2 : MD の事前配置石を、通常の石と同じ項目 ( 距離・ハウス内・シート内 ) で持つようにした ( issue #15 )
+RESULT_FORMAT_VERSION = 2
 
 
 # ─── 解析結果の入れ物 ─────────────────────────────────────────────────────────
@@ -99,9 +101,10 @@ class EndResult:
     page: int | None = None           # Shot by Shot のページ番号
     shots: list[ShotResult] = field(default_factory=list)
     # MD で Shot by Shot のページを処理したエンドのみ True。このとき prepositioned に
-    # 事前配置石 ( 取れなかった場合は None ) が入る。ストーン同定に渡すマップの元になる。
+    # 事前配置石 ( 取れなかった場合は None ) が入る。ストーン同定に渡すマップの元になり、
+    # DB にも「1投目より前の盤面」として保存する。
     has_prepositioned_info: bool = False
-    prepositioned: list[dict[str, Any]] | None = None
+    prepositioned: list[StoneResult] | None = None
 
 
 @dataclass
@@ -175,7 +178,7 @@ def save_event_result(result: EventResult, path: str | Path) -> None:
 def load_event_result(path: str | Path) -> EventResult:
     """
         JSON ファイルから解析結果を読み込む。
-        JSON にはタプルが無くリストになるため、タプルだった箇所 ( 順位、事前配置石の座標 ) は
+        JSON にはタプルが無くリストになるため、タプルだった箇所 ( 順位 ) は
         読み込み時にタプルへ戻す。
 
         Args:
@@ -202,7 +205,7 @@ def load_event_result(path: str | Path) -> EventResult:
                      for sh in e.pop("shots")]
             pre = e.pop("prepositioned")
             if pre is not None:
-                pre = [{**p, "pos": tuple(p["pos"])} for p in pre]
+                pre = [StoneResult(**p) for p in pre]
             ends.append(EndResult(**e, shots=shots, prepositioned=pre))
         lsds = [LsdResult(**lsd) for lsd in g.pop("lsds")]
         games.append(GameResult(**g, lsds=lsds, ends=ends))
@@ -361,20 +364,18 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
                 stones_end, shot_info, pre_stones_np = extract_shotbyshot(doc, page_mu, model, is_md)
                 logger.info(f"[{game_context}] End {num_end} - Shot-by-Shot page: {page_num} - Number of shots: {max(len(stones_end), len(shot_info))}")
 
-                # MD版: Prepositioned stone座標をマッチング用の辞書形式に変換して保持する
+                # MD版: Prepositioned stone を、通常の石と同じ形 ( StoneResult ) で保持する
                 if is_md:
                     end.has_prepositioned_info = True
                     if pre_stones_np is not None:
-                        pre_stone_dicts: list[dict[str, Any]] = []
-                        for row in pre_stones_np:
-                            if row[5] == 1:  # insheet フラグが立っている行のみ
-                                pre_stone_dicts.append({
-                                    'color': NUM2COLOR[int(row[0])],
-                                    'pos': (float(row[1]), float(row[2])),
-                                    'label': 0,  # Prepositioned stone は shot_order=0
-                                })
+                        # insheet フラグが立っている行のみ石として保持する
+                        pre_stones = [
+                            StoneResult(color=NUM2COLOR[int(row[0])], x=float(row[1]), y=float(row[2]),
+                                        distance_from_center=float(row[3]), inhouse=int(row[4]), insheet=int(row[5]))
+                            for row in pre_stones_np if row[5] == 1
+                        ]
                         # 有効なストーンが取れた場合のみ保持、取れなかった場合はNone
-                        end.prepositioned = pre_stone_dicts if pre_stone_dicts else None
+                        end.prepositioned = pre_stones if pre_stones else None
                     else:
                         # MD版だがPrepositioned stone画像がなかった → スキップ対象
                         end.prepositioned = None
@@ -624,7 +625,11 @@ def write_event(conn: sqlite3.Connection, result: EventResult) -> tuple[int, dic
             end_id = cur.lastrowid #end_idを取得
 
             if end.has_prepositioned_info:
-                prepositioned_map[end_id] = end.prepositioned
+                # 同定の起点にする形 ( 色・座標・ラベル ) に直す。事前配置石のラベル ( shot_order ) は 0
+                prepositioned_map[end_id] = (
+                    [{'color': s.color, 'pos': (s.x, s.y), 'label': 0} for s in end.prepositioned]
+                    if end.prepositioned else None
+                )
 
             for shot in end.shots:
                 cur.execute("""INSERT INTO shots(end_id, number, color, team, player_name,
