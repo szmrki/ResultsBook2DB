@@ -14,6 +14,7 @@ DBに保存された各ショット後のストーン座標を用いて、
 
 同定結果は stones テーブルの shot_order カラムに書き戻す。
     - 正の値(1〜16): 何投目に投げられたか (= shots.number と同じドメイン)
+    - 0             : MD の事前配置石 ( 投球された石ではない )
     - 負の値        : ハンマールール等の制約に反した要確認のケース (-shot_num)
     - NULL          : 座標が無い行 (x/y が NULL のプレースホルダ行) は対象外
 
@@ -236,6 +237,10 @@ def _fetch_end_metadata(
 def _fetch_shots_for_end(conn: sqlite3.Connection, end_id: int) -> list[tuple[int, int, str]]:
     """エンド内のショットを投球順に取得する。
 
+    MD の number=0 の shot ( 事前配置石の盤面。投球ではない ) は含めない。
+    事前配置石は同定の起点 ( initial_stones ) として別に渡され、shot_order も
+    保存時に 0 が入っているため、同定の対象にする必要がない。
+
     Args:
         conn: SQLite 接続。
         end_id: 対象エンドのID。
@@ -245,7 +250,7 @@ def _fetch_shots_for_end(conn: sqlite3.Connection, end_id: int) -> list[tuple[in
     """
     cur = conn.cursor()
     cur.execute(
-        "SELECT id, number, color FROM shots WHERE end_id = ? ORDER BY number ASC",
+        "SELECT id, number, color FROM shots WHERE end_id = ? AND number >= 1 ORDER BY number ASC",
         (end_id,),
     )
     return cur.fetchall()

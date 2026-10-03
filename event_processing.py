@@ -562,6 +562,9 @@ def write_event(conn: sqlite3.Connection, result: EventResult) -> tuple[int, dic
         ID ( AUTOINCREMENT ) はテーブルごとに INSERT した順に振られるため、順番を保つことで
         常に同じ ID になる。
 
+        MD では、事前配置石が取れたエンドごとに number=0 の shot を1つ作り、その下に
+        事前配置石 ( shot_order=0 ) を保存する。エンド内では 1投目の shot より先に INSERT する。
+
         Args:
             conn : SQLite の接続
             result : extract_event の解析結果
@@ -630,6 +633,19 @@ def write_event(conn: sqlite3.Connection, result: EventResult) -> tuple[int, dic
                     [{'color': s.color, 'pos': (s.x, s.y), 'label': 0} for s in end.prepositioned]
                     if end.prepositioned else None
                 )
+
+            # MD版: 事前配置石を「1投目より前の盤面」として保存する ( issue #15 ) 。
+            # stones は必ずどれかの shot にぶら下がるため、投球ではない number=0 の shot を1つ作り、
+            # その下に入れる。投球に由来する列 ( color / team / player_name / type / turn /
+            # percent_score ) はすべて NULL にする。事前配置石が取れなかったエンドでは作らない。
+            if end.prepositioned:
+                cur.execute("INSERT INTO shots(end_id, number) VALUES (?, 0)", (end_id,))
+                pre_shot_id = cur.lastrowid
+                # shot_order は同定を通さず、ここで 0 ( = 事前配置石 ) を直接入れる
+                cur.executemany("""INSERT INTO stones (shot_id, color, x, y, distance_from_center,
+                                inhouse, insheet, shot_order) VALUES (?, ?, ?, ?, ?, ?, ?, 0)""",
+                                [(pre_shot_id, s.color, s.x, s.y, s.distance_from_center, s.inhouse, s.insheet)
+                                 for s in end.prepositioned])
 
             for shot in end.shots:
                 cur.execute("""INSERT INTO shots(end_id, number, color, team, player_name,
