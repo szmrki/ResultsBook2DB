@@ -39,6 +39,19 @@ FLIP_LINE_RATIO = 0.8    #1行のうちこの割合以上が黒なら横線と�
 FLIP_HOG_FROM = 18       #ホッグラインを探す範囲の始まり ( 上端または下端から数えた行数 )
 FLIP_HOG_TO = 22         #ホッグラインを探す範囲の終わり ( この行は含まない )
 
+#同じストーンが赤と黄の両方で検出されたときの判定に使う値
+#中心間の距離 [px] がこの値未満なら、同じストーンを2色で検出したとみなす。
+#実測では、同じストーンの二重検出は 0.9px 未満、図の上で重ねて描かれた別々のストーンは 4.3px 以上だった
+SAME_STONE_MAX_DIST = 2
+STONE_SAT_MIN = 150      #ストーンの塗りとみなす彩度の下限 ( ハウスの淡い色を除く )
+STONE_VAL_MIN = 100      #ストーンの塗りとみなす明度の下限 ( 輪郭線や印の黒を除く )
+RED_HUE_MAX = 10         #赤の色相の範囲。OpenCV の H は 0〜179 で、赤は両端にまたがるため「この値以下」または
+RED_HUE_MIN = 170        #「この値以上」を赤とする
+YELLOW_HUE_MIN = 15      #黄の色相の範囲の始まり
+YELLOW_HUE_MAX = 40      #黄の色相の範囲の終わり
+CLS_RED = 0              #モデルのクラス番号 ( 赤 )
+CLS_YELLOW = 1           #モデルのクラス番号 ( 黄 )
+
 def __flip_by_white(img: np.ndarray) -> bool | None:
     """
         上下の白い画素の数を比べて、上下反転が必要かを判定する
@@ -92,6 +105,71 @@ def needs_flip(img: np.ndarray) -> bool | None:
         flip = __flip_by_hogline(img)
     return flip
 
+def __count_stone_pixels(img: np.ndarray, xyxy: np.ndarray) -> tuple[int, int]:
+    """
+        バウンディングボックスの中にある、赤と黄のストーンの塗りの画素数を数える
+        Args:
+            img : シート画像のnumpy配列 ( BGR )
+            xyxy : バウンディングボックス ( 左上x, 左上y, 右下x, 右下y )
+        Returns:
+            tuple[int, int] : ( 赤の画素数, 黄の画素数 )
+    """
+    height, width = img.shape[:2]
+    #箱が画像の外にはみ出す場合があるため、画像の範囲に収める
+    x1 = max(int(np.floor(xyxy[0])), 0)
+    y1 = max(int(np.floor(xyxy[1])), 0)
+    x2 = min(int(np.ceil(xyxy[2])), width)
+    y2 = min(int(np.ceil(xyxy[3])), height)
+    if x1 >= x2 or y1 >= y2:
+        return 0, 0
+
+    #色相 ( H ) で赤と黄を分ける。彩度と明度の下限で、ハウスの淡い色・白地・黒い線を除く
+    hsv = cv2.cvtColor(img[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)
+    hue, sat, val = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    fill = (sat >= STONE_SAT_MIN) & (val >= STONE_VAL_MIN)
+    red = fill & ((hue <= RED_HUE_MAX) | (hue >= RED_HUE_MIN))
+    yellow = fill & (hue >= YELLOW_HUE_MIN) & (hue <= YELLOW_HUE_MAX)
+    return int(red.sum()), int(yellow.sum())
+
+def __find_wrong_color_boxes(img: np.ndarray, xyxy: np.ndarray, cls: np.ndarray, conf: np.ndarray,
+                             context: str = "") -> set[int]:
+    """
+        同じストーンが赤と黄の両方で検出された組を探し、誤った色の方の番号を返す
+        YOLO の NMS はクラスごとに行われるため、同じ位置でも色が違う検出は両方残る。
+        投げた直後のストーンに印が描かれる大会などで、赤いストーンに黄の検出が重なることがある。
+        確信度は誤った色の方が高い場合があるため、図の塗りの色で正しい方を決める
+        Args:
+            img : 検出に使ったシート画像のnumpy配列 ( BGR )
+            xyxy : 検出ごとのバウンディングボックス ( N x 4 )
+            cls : 検出ごとのクラス番号 ( N ) 。赤が0、黄が1
+            conf : 検出ごとの確信度 ( N )
+            context : 警告ログに付ける、画像の出どころの説明 ( ページ番号など )
+        Returns:
+            set[int] : 取り除く検出の番号 ( xyxy の行番号 ) の集合
+    """
+    centers = np.column_stack([(xyxy[:, 0] + xyxy[:, 2]) / 2, (xyxy[:, 1] + xyxy[:, 3]) / 2])
+    drop: set[int] = set()
+    for r in np.flatnonzero(cls == CLS_RED):
+        for y in np.flatnonzero(cls == CLS_YELLOW):
+            if np.hypot(*(centers[r] - centers[y])) >= SAME_STONE_MAX_DIST:
+                continue
+
+            #2つの箱はほぼ同じ位置にあるので、赤の箱の範囲で塗りの色を数える
+            n_red, n_yellow = __count_stone_pixels(img, xyxy[r])
+            logger.debug(f"[{context}] 赤と黄が重なった検出があります "
+                         f"( 塗りの画素数 赤: {n_red}, 黄: {n_yellow} / 確信度 赤: {conf[r]:.2f}, 黄: {conf[y]:.2f} )")
+            if n_red > n_yellow:
+                drop.add(int(y))
+            elif n_yellow > n_red:
+                drop.add(int(r))
+            else:
+                #塗りの色で決まらない場合は、確信度の低い方を取り除く
+                loser = int(r) if conf[r] < conf[y] else int(y)
+                drop.add(loser)
+                logger.warning(f"[{context}] 赤と黄が重なった検出の色を図から判定できませんでした "
+                               f"( 確信度の高い方を残します。赤: {conf[r]:.2f}, 黄: {conf[y]:.2f} )")
+    return drop
+
 def get_stones_pos(imgs: list[np.ndarray], model: YOLO, context: str = "") -> list[np.ndarray]:
     """
         ストーン座標をモデルを用いて取得する（バッチ推論）
@@ -129,12 +207,24 @@ def get_stones_pos(imgs: list[np.ndarray], model: YOLO, context: str = "") -> li
 
     stones_list = []
     # 結果は入力順に並ぶ
-    for result in results:
+    for i, (img, result) in enumerate(zip(preprocessed, results), start=1):
         # 中心座標リスト
         centers = []
 
+        # 同じストーンが赤と黄の両方で検出された場合、誤った色の方を取り除く
+        wrong = __find_wrong_color_boxes(
+            img,
+            result.boxes.xyxy.cpu().numpy(),
+            result.boxes.cls.cpu().numpy().astype(int),
+            result.boxes.conf.cpu().numpy(),
+            f"{context} {i}枚目",
+        )
+
         # バウンディングボックスから中心座標を計算
-        for box in result.boxes:
+        for j, box in enumerate(result.boxes):
+            if j in wrong:
+                continue
+
             x1, y1, x2, y2 = box.xyxy[0].tolist()  # 左上(x1, y1), 右下(x2, y2)
             cx = (x1 + x2) / 2
             cy = (y1 + y2) / 2
