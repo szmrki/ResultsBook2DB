@@ -200,6 +200,36 @@ def __find_wrong_color_boxes(img: np.ndarray, xyxy: np.ndarray, cls: np.ndarray,
                                f"( 確信度の高い方を残します。赤: {conf[r]:.2f}, 黄: {conf[y]:.2f} )")
     return drop
 
+def __fix_wrong_colors(img: np.ndarray, stones: list[tuple[int, float, float]],
+                       context: str = "") -> list[tuple[int, float, float]]:
+    """
+        採用済みのストーンのうち、図の塗りが反対色のものの色を付け替える
+        赤と黄の両方で検出されたストーンは、片方の確信度だけが DETECT_CONF を超えると、
+        誤った色の方だけが残ることがある ( 赤いストーンが黄として検出される ) 。
+        ストーンの位置を中心とする円の中で、反対色の塗りが FILL_RATIO_MIN 以上を占めていれば反対色とみなす。
+        位置は変えない
+        Args:
+            img : 検出に使ったシート画像のnumpy配列 ( BGR )
+            stones : 採用済みのストーンのリスト。要素は ( クラス番号, 中心x [px], 中心y [px] )
+            context : ログに付ける、画像の出どころの説明 ( ページ番号など )
+        Returns:
+            list[tuple[int, float, float]] : 色を直したストーンのリスト ( 並び順と位置は stones と同じ )
+    """
+    names = {CLS_RED: "赤", CLS_YELLOW: "黄"}
+    red, yellow = __stone_masks(img)
+    masks = {CLS_RED: red.astype(np.uint8), CLS_YELLOW: yellow.astype(np.uint8)}
+
+    fixed: list[tuple[int, float, float]] = []
+    for cls_id, x, y in stones:
+        other_cls = CLS_YELLOW if cls_id == CLS_RED else CLS_RED
+        ratio = __fill_ratio_at(masks[other_cls], x, y)
+        if ratio >= FILL_RATIO_MIN:
+            logger.info(f"[{context}] {names[cls_id]}として検出されたストーンの色を{names[other_cls]}に直しました "
+                        f"( {names[other_cls]}の塗りの割合 {ratio:.2f}, x={x:.1f}px, y={y:.1f}px )")
+            cls_id = other_cls
+        fixed.append((cls_id, x, y))
+    return fixed
+
 def __fill_ratio_at(mask: np.ndarray, x: float, y: float) -> float:
     """
         指定した位置を中心とする円 ( 半径 FILL_CHECK_RADIUS ) の中で、塗りの画素が占める割合を求める
@@ -388,6 +418,9 @@ def get_stones_pos(imgs: list[np.ndarray], model: YOLO, context: str = "") -> li
         wrong = __find_wrong_color_boxes(img, xyxy[detected], cls[detected], conf[detected], frame_context)
         stones = [(int(cls[j]), float(box_centers[j, 0]), float(box_centers[j, 1]))
                   for k, j in enumerate(detected) if k not in wrong]
+
+        # 図の塗りが反対色のストーンは、色を付け替える
+        stones = __fix_wrong_colors(img, stones, frame_context)
 
         # 図にストーンが描かれているのに検出されなかった位置を補完する
         candidates = [(int(cls[j]), float(box_centers[j, 0]), float(box_centers[j, 1]), float(conf[j]))
