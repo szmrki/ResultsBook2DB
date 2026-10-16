@@ -264,7 +264,7 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
             page_mu = doc[pn]
             text = page_mu.get_text()
             # 順位ページ ( is_standings_page ) の判定を最初に置く。
-            # is_standings_page は「単独行 Final Standings + 列見出し行」という
+            # is_standings_page は「見出し行 Final Standings + 列見出し行」という
             # 最も厳格な条件のため試合ページを誤って奪う心配が小さく、逆に順位ページの
             # テキストに "Game Results" 等が紛れても正しく順位側に振り分けられる
             # ( 分岐の順序依存による偽陰性を避ける )。

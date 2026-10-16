@@ -548,6 +548,23 @@ _STANDINGS_ROW_RE = re.compile(r'^\s*(\d+|Gold|Silver|Bronze)\s+([A-Z]{3}) - ', 
 _MEDAL_TO_RANK = {"Gold": 1, "Silver": 2, "Bronze": 3}
 
 
+def __is_final_standings_header(line: str) -> bool:
+    """
+        1行が見出し "Final Standings" の行かどうかを判定する。
+
+        改訂された順位表では、見出しと同じ行の右側に "REVISED" の印が並ぶ
+        ( 例: WMCC2021 の "Final Standings      REVISED" ) 。そのため行全体ではなく、
+        2つ以上続く空白で区切った先頭の要素だけを見出しと比べる。
+
+        Args:
+            line: strip 済みの1行。
+
+        Returns:
+            bool: 行の先頭の要素が "Final Standings" なら True。
+    """
+    return re.split(r"\s{2,}", line)[0] == "Final Standings"
+
+
 def is_standings_page(page: fitz.Page) -> bool:
     """
         指定ページが最終順位表 ( Final Standings ) のページかどうかを判定する。
@@ -561,13 +578,13 @@ def is_standings_page(page: fitz.Page) -> bool:
             page: PyMuPDF のページオブジェクト。
 
         Returns:
-            bool: 単独見出し行 "Final Standings" と列見出し行 ( Rank/Team/Player を含む )
-                の両方を冒頭に持つ場合 True。
+            bool: 見出し行 "Final Standings" ( 右側に改訂の印が並ぶ場合を含む ) と
+                列見出し行 ( Rank/Team/Player を含む ) の両方を冒頭に持つ場合 True。
     """
     # 読み順を座標でソートして取得し、各行を strip する
     lines = [line.strip() for line in page.get_text(sort=True).split("\n")]
     head = lines[:14]  # 見出しはページ冒頭付近。多言語ページでも 14 行以内に収まる
-    has_fs_header = any(line == "Final Standings" for line in head)
+    has_fs_header = any(__is_final_standings_header(line) for line in head)
     # 列見出しは 4人制 = "Players"、MD = "Female Player / Male Player" と表記が分かれるため、
     # 複数形の "s" を含めず "Player" で両対応する ( 古い MD の検出漏れ対策 )。
     has_column_header = any(
@@ -637,7 +654,7 @@ def extract_venue(page: fitz.Page, game: str = "") -> tuple[str | None, str | No
     # "Final Standings" 見出し行より前で、カンマを含み Championship を含まない行を会場行とみなす
     venue_line = None
     for line in lines:
-        if line == "Final Standings":
+        if __is_final_standings_header(line):
             break
         if "," in line and "Championship" not in line:
             venue_line = line
