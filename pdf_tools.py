@@ -216,7 +216,9 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
         - 今の書式 ( 2017年秋以降 ) : 種別 → 採点 ( "75%" / "-" ) → 回転 ( "↻" / "↺" ) → 選手
         - 古い書式 ( WMCC2017、WMDCC2016 / 2017 など ) :
             採点 ( 0〜4 の点数 / "X" ) → 回転 → 種別 → 選手
-        どちらも回転が書かれていない投球があるため、回転なしの形も読む。
+        今の書式には回転が書かれていない投球があるため、回転なしの形も読む。
+        古い書式は Through も回転付きで書かれるため、回転なしの形は読まない
+        ( 読むと、ページ下部の凡例 "X" → 説明文 → 注記 "NOR: ..." を投球と誤認する。WJCC2017 Men ) 。
 
         Args:
             all_texts : ショットバイショットのすべてのテキスト情報のリスト
@@ -292,20 +294,6 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
             shots.append({
                 "type": type,
                 "score": score,
-                "turn": None,  # 欠損扱い
-                "team": team,
-                "player": player,
-            })
-            i += 3
-            continue
-
-        # --- パターン D：古い書式・回転なし (3要素) ---
-        score, type, player = all_texts[i:i+3]
-        if old_score_pattern.match(score) and is_old_type(type) and player_pattern.match(player):
-            team, player = player.split(": ")
-            shots.append({
-                "type": __normalize_old_type(type),
-                "score": __convert_old_score(score),
                 "turn": None,  # 欠損扱い
                 "team": team,
                 "player": player,
