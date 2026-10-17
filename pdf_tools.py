@@ -535,10 +535,30 @@ def __black_more_than_white(image_array: np.ndarray) -> bool:
 def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
     """
     Game ResultsページのテキストからLSD情報を抽出する
+
+    Args:
+        text : Game Results ページのテキスト ( pdfplumber で抽出したもの )
+    Returns:
+        list[dict[str, str | float | None]] : 1行 ( 赤・黄の選手1人ずつ ) ごとの
+            選手名と LSD の距離 ( cm ) の辞書のリスト
     """
     results = []
     # 数値+cm を抽出する正規表現
     lsd_value_pattern = re.compile(r'(\d+\.?\d*)\s*cm')
+
+    def clean_player(name: str) -> str:
+        """選手名の先頭にある回転の記号 ( ↻ / ↺ ) を取り除く
+
+        WMCC2016・ECC2015・WMDCC2016 などの古い書式では、LSD の行が
+        "↻ KOE K 12.0cm ↻ PFISTER E 16.4cm" のように、選手名の前に回転の記号付きで抽出される。
+        記号は LSD を投げた回転だが、lsds テーブルに回転の列が無いため、今は名前から取り除くだけにする。
+
+        Args:
+            name : 抽出した選手名
+        Returns:
+            str : 記号を取り除いた選手名
+        """
+        return re.sub(r'^[↻↺]\s*', '', name)
 
     lines = text.split('\n')
     lsd_section = False
@@ -559,9 +579,9 @@ def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
     for line in lsd_lines:
         matches = list(lsd_value_pattern.finditer(line))
         if len(matches) >= 2:
-            player_red = line[:matches[0].start()].strip()
+            player_red = clean_player(line[:matches[0].start()].strip())
             lsd_red = float(matches[0].group(1))
-            player_yellow = line[matches[0].end():matches[1].start()].strip()
+            player_yellow = clean_player(line[matches[0].end():matches[1].start()].strip())
             lsd_yellow = float(matches[1].group(1))
 
             results.append({
@@ -571,7 +591,7 @@ def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
                 "lsd_yellow": lsd_yellow,
             })
         elif len(matches) == 1:
-            player_red = line[:matches[0].start()].strip()
+            player_red = clean_player(line[:matches[0].start()].strip())
             lsd_red = float(matches[0].group(1))
             results.append({
                 "player_red": player_red,
