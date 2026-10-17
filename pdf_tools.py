@@ -74,7 +74,7 @@ def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model: YOLO, is_md: 
             #logger.debug(f"y0={shotbyshot_list[-1]['y']}")
 
     # 上→下、左→右でソート(投球順に合わせる)
-    shotbyshot_list.sort(key=lambda im: (im["y"], im["x"]))
+    shotbyshot_list = __sort_by_rows(shotbyshot_list)
 
     # MD版: Prepositioned stone画像を取り出してYOLO推論し、座標を取得する
     pre_stones = None
@@ -427,6 +427,33 @@ def __extract_images(doc: fitz.Document, page: fitz.Page) -> tuple[list[dict[str
                 "is_negated": is_negated,
             })
     return shotbyshot_list, bboxes
+
+# 同じ行とみなす y 座標の差 ( pt ) 。図の行の間隔は約 180pt あり、
+# 同じ行の図のずれは 0.1pt 未満なので、その間の値にしておく
+_SAME_ROW_TOLERANCE = 20
+
+
+def __sort_by_rows(images: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+        図を投球順 ( 上の行から順に、行の中は左から右 ) に並べる
+
+        2014〜2016 年の Results Book ( WWCC2015・WMCC2014 / 2016・ECC2015・OWG2014 ) では、
+        同じ行の図の y 座標がわずかに ( 0.1pt 未満 ) ずれている。そのまま ( y, x ) で並べると、
+        y が少し小さい図が行の先頭に来て、投球と盤面の組み合わせがずれる ( issue #27 ) 。
+        そのため、y の差が _SAME_ROW_TOLERANCE 以内の図を同じ行にまとめてから x で並べる。
+        Args:
+            images : 図の辞書 ( "x" / "y" に左上の座標を持つ ) のリスト
+        Returns:
+            list[dict[str, Any]] : 投球順に並べた図のリスト
+    """
+    rows: list[list[dict[str, Any]]] = []
+    for im in sorted(images, key=lambda im: im["y"]):
+        # 行の先頭の図との y の差が小さければ同じ行、大きければ新しい行
+        if rows and im["y"] - rows[-1][0]["y"] <= _SAME_ROW_TOLERANCE:
+            rows[-1].append(im)
+        else:
+            rows.append([im])
+    return [im for row in rows for im in sorted(row, key=lambda im: im["x"])]
 
 # 数値に変換できるものは int、できないものはそのまま
 def __try_int(x: Any) -> int | str:
