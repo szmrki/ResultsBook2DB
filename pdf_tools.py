@@ -362,7 +362,7 @@ def save_images(doc: fitz.Document, output_dir: Path, save_num: int) -> int:
     for pn in range(doc.page_count):
         page = doc[pn]
         text = page.get_text()
-        if "Shot by Shot" in text:
+        if is_shot_by_shot_page(text):
             shotbyshot_list, _ = __extract_images(doc, page)
 
             for i,img in enumerate(shotbyshot_list, start=1):
@@ -703,6 +703,73 @@ def extract_year_and_category(game: str, is_md: bool) -> tuple[int | None, str |
                 else:
                     category = None
     return year, category
+
+
+# ============================================================================
+# ページの種類の判定 ( Game Results / Shot by Shot )
+#   ページ本文に "Game Results" / "Shot by Shot" の文字があるかで判定する。
+#   ただし五輪の Results Book には、文字はあっても試合のページではないページがある ( issue #27 ) 。
+#     - 目次 ( Table of Contents ) : 項目名として両方の文字が並ぶ ( OWG2010 / 2014 / 2018 。
+#       OWG2018 は目次が11ページあり、見出しは1ページ目にしか無い )
+#     - Game Results の2ページ目以降 : 注記や凡例だけのページ ( OWG2018 の改訂版 )
+#   これらを試合のページとして扱うと、チーム名も得点も無い試合が作られたり、
+#   直後の Shot by Shot で「エンドが見つからない」として止まったりする。
+# ============================================================================
+
+# ページ番号の表記 ( 例: "Page 2/10" )
+_PAGE_NUMBER_RE = re.compile(r"Page (\d+)/(\d+)")
+
+
+def __is_table_of_contents(text: str) -> bool:
+    """
+        目次のページかどうかを判定する
+
+        次のどちらかに当てはまれば目次とみなす。
+        - 冒頭に見出し "Table of Contents" がある
+          ( OWG2010 は "TABLE OF CONTENTS" と大文字のため、大文字小文字は区別しない )
+        - "Game Results" と "Shot by Shot" の両方を含む
+          ( 目次には両方が項目として並ぶ。OWG2018 の目次は2ページ目以降に見出しが無いため、
+          こちらで見分ける。試合のページで両方を含むものは全 PDF で無い )
+
+        Args:
+            text : ページのテキスト
+        Returns:
+            bool : 目次のページなら True
+    """
+    head = text.splitlines()[:10]
+    if any("table of contents" in line.lower() for line in head):
+        return True
+    return "Game Results" in text and "Shot by Shot" in text
+
+
+def is_game_results_page(text: str) -> bool:
+    """
+        新しい試合の始まりとなる Game Results のページかどうかを判定する
+
+        Game Results が複数ページにわたる場合 ( "Page 2/2" など ) 、2ページ目以降は
+        注記や凡例だけなので、新しい試合としては扱わない。
+
+        Args:
+            text : ページのテキスト
+        Returns:
+            bool : 試合の Game Results の1ページ目なら True
+    """
+    if "Game Results" not in text or __is_table_of_contents(text):
+        return False
+    m = _PAGE_NUMBER_RE.search(text)
+    return m is None or int(m.group(1)) == 1
+
+
+def is_shot_by_shot_page(text: str) -> bool:
+    """
+        Shot by Shot ( 1エンド分の図 ) のページかどうかを判定する
+
+        Args:
+            text : ページのテキスト
+        Returns:
+            bool : Shot by Shot のページなら True ( 目次は除く )
+    """
+    return "Shot by Shot" in text and not __is_table_of_contents(text)
 
 
 # ============================================================================

@@ -37,7 +37,7 @@ from detection import create_pseudo_label
 from pdf_tools import (
     extract_game_result, extract_lsd_from_text, extract_rosters, extract_rosters_md,
     extract_shotbyshot, extract_standings, extract_venue, extract_year_and_category,
-    is_standings_page, save_images,
+    is_game_results_page, is_shot_by_shot_page, is_standings_page, save_images,
 )
 from prepositioned import correct_prepositioned_stones
 from stone_matching import MD_PROTECTED_SHOTS, correct_equidistant_blank_hammer, label_event_ends
@@ -285,7 +285,7 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
                     venue_saved = True
                     logger.info(f"[{game}] Standings page: {page_num} - location: {result.location}, venue: {result.venue}")
 
-            elif "Game Results" in text: #新たな試合
+            elif is_game_results_page(text): #新たな試合 ( 目次と、2ページ目以降は除く )
                 if is_md:
                     scores, power_play_ends = extract_game_result(page_plumber, is_md) #得点表のdfとPPエンドのリスト
                 else:
@@ -353,7 +353,7 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
 
                 num_end = 1
 
-            elif "Shot by Shot" in text: #新たなエンド
+            elif is_shot_by_shot_page(text): #新たなエンド ( 目次は除く )
                 # 該当するエンドを探し、ページ情報を記録する
                 if current_game is None:
                     raise RuntimeError(f"Shot by Shot page {page_num} appeared before any Game Results page")
