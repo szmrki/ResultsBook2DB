@@ -690,7 +690,7 @@ def is_standings_page(page: fitz.Page) -> bool:
 
         Returns:
             bool: 見出し行 "Final Standings" ( 右側に改訂の印が並ぶ場合を含む ) と
-                列見出し行 ( Rank/Team/Player を含む ) の両方を冒頭に持つ場合 True。
+                列見出し行 ( Team/Player を含む ) の両方を冒頭に持つ場合 True。
     """
     # 読み順を座標でソートして取得し、各行を strip する
     lines = [line.strip() for line in page.get_text(sort=True).split("\n")]
@@ -698,8 +698,10 @@ def is_standings_page(page: fitz.Page) -> bool:
     has_fs_header = any(__is_final_standings_header(line) for line in head)
     # 列見出しは 4人制 = "Players"、MD = "Female Player / Male Player" と表記が分かれるため、
     # 複数形の "s" を含めず "Player" で両対応する ( 古い MD の検出漏れ対策 )。
+    # 2016年以前の古い書式 ( ECC2014〜2016、WMCC2014、OWG2014 ) は列見出しに "Rank" が無い
+    # ( "Team  Players  Position - Function" ) ため、"Rank" は条件に含めない ( issue #27 ) 。
     has_column_header = any(
-        ("Rank" in line and "Team" in line and "Player" in line) for line in head
+        ("Team" in line and "Player" in line) for line in head
     )
     return has_fs_header and has_column_header
 
@@ -807,9 +809,11 @@ _ROSTER_RANK_HEAD_RE = re.compile(r'^\s*(?:\d+|Gold|Silver|Bronze)\s+([A-Z]{3}) 
 #   - 投球順のみ: "1" 〜 "4"
 #   - 投球順 + 役割: "4 S" ( Skip ) / "3 V" ( Vice-skip )。順序は <数字> <英字>。
 #   - 役割のみ: "A" ( Alternate ) / "C" ( Coach )
+#   - 古い書式 ( WMCC2014 ) では役割を略さず "4 Skip" / "3 Vice-Skip" と書く ( issue #27 )
 # 選手名にも空白が含まれる ( 例: "PETERSSON Haavard Vad" ) ため、
 # 「行末に固定された Position-Function 記号」だけを取り出す形でアンカーする。
-_POS_FUNC_TAIL_RE = re.compile(r'\s+([1-4])(?:\s+([SV]))?\s*$|\s+([AC])\s*$')
+# 長い表記を先に試すため、選択肢は "Vice-Skip" / "Skip" を "S" / "V" より前に置く。
+_POS_FUNC_TAIL_RE = re.compile(r'\s+([1-4])(?:\s+(Vice-Skip|Skip|S|V))?\s*$|\s+([AC])\s*$')
 
 # 降格マーカー ( 行末 )。A-Division 大会の降格圏チームのスキップ行 ( 順位行 ) には
 # Position-Function の後ろに ">B" ( B-Division へ降格 ) が付く ( 例: "... 4 S   >B" )。
@@ -930,10 +934,10 @@ def __parse_roster_player(segment: str, is_rank_line: bool) -> dict[str, str | i
     if m.group(1) is not None:
         # 投球順あり ( 1-4 )。role は player。S/V があれば skip/vice フラグを立てる。
         position = int(m.group(1))
-        func = m.group(2)  # "S" / "V" / None
-        if func == "S":
+        func = m.group(2)  # "S" / "V" / "Skip" / "Vice-Skip" / None
+        if func in ("S", "Skip"):
             is_skip = 1
-        elif func == "V":
+        elif func in ("V", "Vice-Skip"):
             is_vice = 1
         role = "player"
     else:
