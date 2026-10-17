@@ -588,7 +588,54 @@ def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
                 "lsd_yellow": None,
             })
 
+    # 今の形で1件も取れなかった場合は、合計が先に書かれた古い形 ( WWCC2015 ) を試す
+    if not results:
+        results = __extract_lsd_total_first(lines)
+
     return results
+
+
+# 古い形 ( WWCC2015 ) の LSD の行。1行目に両チームの「合計・1投目・選手」、2行目に「2投目・選手」が並ぶ。
+#   1行目: "Last Stone Draw: 291.1cm 105.7cm ↻ LIU S Last Stone Draw: 48.7cm 33.9cm ↻ SIDOROVA A"
+#   2行目: "185.4cm ↺ WANG R 14.8cm ↺ GALKINA E"
+# 回転の記号 ( ↻ / ↺ ) は lsds に列が無いため読み飛ばす。
+# 合計しか書かれていない形 ( WMCC2014 の "Last Stone Draw: 185.4 cm (out)" ) は、
+# 1行目に値が2つ続かないため一致しない ( 選手ごとの値が無いので取れなくてよい ) 。
+_LSD_TOTAL_FIRST_ROW1_RE = re.compile(
+    r'Last Stone Draw:\s*[\d.]+\s*cm\s+([\d.]+)\s*cm\s+(?:[↻↺]\s*)?(.+?)\s+'
+    r'Last Stone Draw:\s*[\d.]+\s*cm\s+([\d.]+)\s*cm\s+(?:[↻↺]\s*)?(.+?)\s*$'
+)
+_LSD_TOTAL_FIRST_ROW2_RE = re.compile(
+    r'^\s*([\d.]+)\s*cm\s+(?:[↻↺]\s*)?(.+?)\s+([\d.]+)\s*cm\s+(?:[↻↺]\s*)?(.+?)\s*$'
+)
+
+
+def __extract_lsd_total_first(lines: list[str]) -> list[dict[str, str | float | None]]:
+    """
+    合計が先に書かれた古い形 ( WWCC2015 ) の LSD を読む
+
+    Args:
+        lines : Game Results ページのテキストを行に分けたもの
+    Returns:
+        list[dict[str, str | float | None]] : 1行 ( 赤・黄の選手1人ずつ ) ごとの
+            選手名と LSD の距離 ( cm ) の辞書のリスト。この形でなければ空リスト
+    """
+    for i, line in enumerate(lines[:-1]):
+        m1 = _LSD_TOTAL_FIRST_ROW1_RE.search(line)
+        if not m1:
+            continue
+        rows = [m1.groups()]
+        # 2投目は次の行に書かれている
+        m2 = _LSD_TOTAL_FIRST_ROW2_RE.match(lines[i + 1])
+        if m2:
+            rows.append(m2.groups())
+        return [{
+            "player_red": red_name,
+            "player_yellow": yellow_name,
+            "lsd_red": float(red_cm),
+            "lsd_yellow": float(yellow_cm),
+        } for red_cm, red_name, yellow_cm, yellow_name in rows]
+    return []
 
 
 def extract_year_and_category(game: str, is_md: bool) -> tuple[int | None, str | None]:
