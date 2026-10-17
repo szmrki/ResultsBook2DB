@@ -124,8 +124,9 @@ def extract_game_result(page: pdfplumber.page.Page, is_md: bool = False) -> pd.D
         lines = text.split('\n')
         for line in lines:
                 # "power play: end " の後ろにある数値のみ抽出
-                # 大文字小文字は区別しない
-                nums = re.findall(r'power play:\s*end\s+(\d+)', line, re.IGNORECASE)
+                # 大文字小文字は区別しない。WMDCC2017 などの古い書式では
+                # "Power Play:End6" と空白なしで抽出されるため、空白は省略可とする
+                nums = re.findall(r'power\s*play:\s*end\s*(\d+)', line, re.IGNORECASE)
                 power_play_ends.extend([int(n) for n in nums])
 
     tabs = page.find_tables()
@@ -210,16 +211,36 @@ def __extract_lsfe_from_text(text: str, team_red: str | None, team_yellow: str |
 def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
     """
         ショットバイショットのテキスト情報から特定の投球の情報を取得する
-        Args:     
+
+        図の下の投球情報は、Results Book の年代によって書式が2通りある。
+        - 今の書式 ( 2017年秋以降 ) : 種別 → 採点 ( "75%" / "-" ) → 回転 ( "↻" / "↺" ) → 選手
+        - 古い書式 ( WMCC2017、WMDCC2016 / 2017 など ) :
+            採点 ( 0〜4 の点数 / "X" ) → 回転 → 種別 → 選手
+        どちらも回転が書かれていない投球があるため、回転なしの形も読む。
+
+        Args:
             all_texts : ショットバイショットのすべてのテキスト情報のリスト
-            #is_MD : MDかどうか
         Returns:
-            list[dict[str, str | int | None]] : 
+            list[dict[str, str | int | None]] :
                 (チーム名, プレイヤー名, ショットタイプ, 回転方向, ショットスコア)の辞書のリスト
     """
     score_pattern = re.compile(r"^\d+%$|^-$")
     turn_pattern = ("↺", "↻")
     player_pattern = re.compile(r"^[A-Z]{3}: .+$")
+    # 古い書式の採点。0〜4 の点数で、"X" ( Through など採点なし ) や "-" もある
+    old_score_pattern = re.compile(r"^[0-4]$|^X$|^-$")
+    # 古い書式の回転。WMDCC2016 は矢印ではなく "In" / "Out" ( インターン / アウトターン ) で書かれる
+    old_turn_pattern = ("↺", "↻", "In", "Out")
+
+    def is_old_type(text: str) -> bool:
+        """古い書式で、種別の位置にある行が種別らしいか ( 投球番号・採点・回転でない ) を判定する
+
+        Args:
+            text : 判定する行
+        Returns:
+            bool : 種別として扱ってよければ True
+        """
+        return not text.isdigit() and text not in old_turn_pattern and not old_score_pattern.match(text)
 
     shots = []
     i = 0
@@ -248,6 +269,21 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
                 i += 4
                 continue
 
+            # --- パターン C：古い書式・回転あり (4要素) ---
+            score, turn, type, player = all_texts[i:i+4]
+            if old_score_pattern.match(score) and turn in old_turn_pattern \
+            and is_old_type(type) and player_pattern.match(player):
+                team, player = player.split(": ")
+                shots.append({
+                    "type": __normalize_old_type(type),
+                    "score": __convert_old_score(score),
+                    "turn": __convert_old_turn(turn),
+                    "team": team,
+                    "player": player,
+                })
+                i += 4
+                continue
+
         # --- パターン B：回転なし (3要素) ---
         type, score, player = all_texts[i:i+3]
         if score_pattern.match(score) and player_pattern.match(player):
@@ -263,10 +299,65 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
             i += 3
             continue
 
-        # どちらにも該当しない場合は1進める
+        # --- パターン D：古い書式・回転なし (3要素) ---
+        score, type, player = all_texts[i:i+3]
+        if old_score_pattern.match(score) and is_old_type(type) and player_pattern.match(player):
+            team, player = player.split(": ")
+            shots.append({
+                "type": __normalize_old_type(type),
+                "score": __convert_old_score(score),
+                "turn": None,  # 欠損扱い
+                "team": team,
+                "player": player,
+            })
+            i += 3
+            continue
+
+        # どれにも該当しない場合は1進める
         i += 1
-    
+
     return shots
+
+def __convert_old_score(score: str) -> int | None:
+    """
+        古い書式の採点 ( 0〜4 の点数 ) を、今の書式と同じ % に直す
+        今の書式の % は 0 / 25 / 50 / 75 / 100 のいずれかで、点数 × 25 と一致する。
+        Args:
+            score : 採点の文字列 ( "0"〜"4" / "X" / "-" )
+        Returns:
+            int | None : % の値。"X" ( Through など ) や "-" は採点なしとして None
+    """
+    return int(score) * 25 if score.isdigit() else None
+
+def __convert_old_turn(turn: str) -> str | None:
+    """
+        古い書式の回転を "cw" / "ccw" に直す
+
+        回転を "In" / "Out" ( インターン / アウトターン ) で書いており、
+        実際の回転方向は投げる選手の利き手で変わる ( 右利きの In と左利きの Out が時計回り ) 。
+        この大会の Results Book には利き手が載っていないため、全員右利きと仮定して
+        In → cw、Out → ccw とする。
+        Args:
+            turn : 回転の文字列 ( "↻" / "↺" / "In" / "Out" )
+        Returns:
+            str | None : "cw" / "ccw"。該当しなければ None
+    """
+    if turn in ("↻", "In"):
+        return "cw"
+    if turn in ("↺", "Out"):
+        return "ccw"
+    return None
+
+def __normalize_old_type(shot_type: str) -> str:
+    """
+        古い書式の種別の表記を、今の書式に揃える
+        WMDCC2016 には小文字の "through" があり、他の大会の "Through" と分かれてしまうため直す。
+        Args:
+            shot_type : 種別の文字列
+        Returns:
+            str : 表記を揃えた種別
+    """
+    return "Through" if shot_type == "through" else shot_type
 
 def save_images(doc: fitz.Document, output_dir: Path, save_num: int) -> int:
     """
