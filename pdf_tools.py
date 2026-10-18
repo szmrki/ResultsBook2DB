@@ -262,7 +262,7 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
                 score = int(score.rstrip('%')) if '%' in score else None
 
                 shots.append({
-                    "type": type,
+                    "type": __normalize_shot_type(type),
                     "score": score,
                     "turn": turn,
                     "team": team,
@@ -277,7 +277,7 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
             and is_old_type(type) and player_pattern.match(player):
                 team, player = player.split(": ")
                 shots.append({
-                    "type": __normalize_old_type(type),
+                    "type": __normalize_shot_type(type),
                     "score": __convert_old_score(score),
                     "turn": __convert_old_turn(turn),
                     "team": team,
@@ -292,7 +292,7 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
             team, player = player.split(": ")
             score = int(score.rstrip('%')) if '%' in score else None
             shots.append({
-                "type": type,
+                "type": __normalize_shot_type(type),
                 "score": score,
                 "turn": None,  # 欠損扱い
                 "team": team,
@@ -336,16 +336,29 @@ def __convert_old_turn(turn: str) -> str | None:
         return "ccw"
     return None
 
-def __normalize_old_type(shot_type: str) -> str:
+# 種別の表記ゆれ → 正規の表記 ( 2017年以降の大会の表記 )
+# 大会ごとにどちらか一方の表記だけが使われている ( 混在はしない ) 。
+_SHOT_TYPE_ALIASES = {
+    "through": "Through",                          # WMDCC2016
+    "Takeout": "Take-out",                         # 2014〜2015年 ( ECC2014 / 2015、WMCC2014、WWCC2015、OWG2014 )
+    "Double Takeout": "Double Take-out",           # 同上
+    "Promotion Takeout": "Promotion Take-out",     # 同上
+    "Wick/Softpeeling": "Wick / Soft Peeling",     # OWG2006 / 2010
+}
+
+
+def __normalize_shot_type(shot_type: str) -> str:
     """
-        古い書式の種別の表記を、今の書式に揃える
-        WMDCC2016 には小文字の "through" があり、他の大会の "Through" と分かれてしまうため直す。
+        種別の表記ゆれを、正規の表記 ( 2017年以降の大会の表記 ) に揃える
+
+        古い大会では "Takeout" ( 正規は "Take-out" ) のように表記が違い、
+        SQL で種別を集計すると別の種別に分かれてしまうため直す ( issue #27 ) 。
         Args:
             shot_type : 種別の文字列
         Returns:
             str : 表記を揃えた種別
     """
-    return "Through" if shot_type == "through" else shot_type
+    return _SHOT_TYPE_ALIASES.get(shot_type, shot_type)
 
 def save_images(doc: fitz.Document, output_dir: Path, save_num: int) -> int:
     """
