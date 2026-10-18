@@ -74,7 +74,7 @@ def extract_shotbyshot(doc: fitz.Document, page: fitz.Page, model: YOLO, is_md: 
             #logger.debug(f"y0={shotbyshot_list[-1]['y']}")
 
     # 上→下、左→右でソート(投球順に合わせる)
-    shotbyshot_list.sort(key=lambda im: (im["y"], im["x"]))
+    shotbyshot_list = __sort_by_rows(shotbyshot_list)
 
     # MD版: Prepositioned stone画像を取り出してYOLO推論し、座標を取得する
     pre_stones = None
@@ -124,8 +124,9 @@ def extract_game_result(page: pdfplumber.page.Page, is_md: bool = False) -> pd.D
         lines = text.split('\n')
         for line in lines:
                 # "power play: end " の後ろにある数値のみ抽出
-                # 大文字小文字は区別しない
-                nums = re.findall(r'power play:\s*end\s+(\d+)', line, re.IGNORECASE)
+                # 大文字小文字は区別しない。WMDCC2017 などの古い書式では
+                # "Power Play:End6" と空白なしで抽出されるため、空白は省略可とする
+                nums = re.findall(r'power\s*play:\s*end\s*(\d+)', line, re.IGNORECASE)
                 power_play_ends.extend([int(n) for n in nums])
 
     tabs = page.find_tables()
@@ -210,16 +211,38 @@ def __extract_lsfe_from_text(text: str, team_red: str | None, team_yellow: str |
 def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
     """
         ショットバイショットのテキスト情報から特定の投球の情報を取得する
-        Args:     
+
+        図の下の投球情報は、Results Book の年代によって書式が2通りある。
+        - 今の書式 ( 2017年秋以降 ) : 種別 → 採点 ( "75%" / "-" ) → 回転 ( "↻" / "↺" ) → 選手
+        - 古い書式 ( WMCC2017、WMDCC2016 / 2017 など ) :
+            採点 ( 0〜4 の点数 / "X" ) → 回転 → 種別 → 選手
+        今の書式には回転が書かれていない投球があるため、回転なしの形も読む。
+        古い書式は Through も回転付きで書かれるため、回転なしの形は読まない
+        ( 読むと、ページ下部の凡例 "X" → 説明文 → 注記 "NOR: ..." を投球と誤認する。WJCC2017 Men ) 。
+
+        Args:
             all_texts : ショットバイショットのすべてのテキスト情報のリスト
-            #is_MD : MDかどうか
         Returns:
-            list[dict[str, str | int | None]] : 
+            list[dict[str, str | int | None]] :
                 (チーム名, プレイヤー名, ショットタイプ, 回転方向, ショットスコア)の辞書のリスト
     """
     score_pattern = re.compile(r"^\d+%$|^-$")
     turn_pattern = ("↺", "↻")
     player_pattern = re.compile(r"^[A-Z]{3}: .+$")
+    # 古い書式の採点。0〜4 の点数で、"X" ( Through など採点なし ) や "-" もある
+    old_score_pattern = re.compile(r"^[0-4]$|^X$|^-$")
+    # 古い書式の回転。WMDCC2016 は矢印ではなく "In" / "Out" ( インターン / アウトターン ) で書かれる
+    old_turn_pattern = ("↺", "↻", "In", "Out")
+
+    def is_old_type(text: str) -> bool:
+        """古い書式で、種別の位置にある行が種別らしいか ( 投球番号・採点・回転でない ) を判定する
+
+        Args:
+            text : 判定する行
+        Returns:
+            bool : 種別として扱ってよければ True
+        """
+        return not text.isdigit() and text not in old_turn_pattern and not old_score_pattern.match(text)
 
     shots = []
     i = 0
@@ -239,9 +262,24 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
                 score = int(score.rstrip('%')) if '%' in score else None
 
                 shots.append({
-                    "type": type,
+                    "type": __normalize_shot_type(type),
                     "score": score,
                     "turn": turn,
+                    "team": team,
+                    "player": player,
+                })
+                i += 4
+                continue
+
+            # --- パターン C：古い書式・回転あり (4要素) ---
+            score, turn, type, player = all_texts[i:i+4]
+            if old_score_pattern.match(score) and turn in old_turn_pattern \
+            and is_old_type(type) and player_pattern.match(player):
+                team, player = player.split(": ")
+                shots.append({
+                    "type": __normalize_shot_type(type),
+                    "score": __convert_old_score(score),
+                    "turn": __convert_old_turn(turn),
                     "team": team,
                     "player": player,
                 })
@@ -254,7 +292,7 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
             team, player = player.split(": ")
             score = int(score.rstrip('%')) if '%' in score else None
             shots.append({
-                "type": type,
+                "type": __normalize_shot_type(type),
                 "score": score,
                 "turn": None,  # 欠損扱い
                 "team": team,
@@ -263,10 +301,64 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
             i += 3
             continue
 
-        # どちらにも該当しない場合は1進める
+        # どれにも該当しない場合は1進める
         i += 1
-    
+
     return shots
+
+def __convert_old_score(score: str) -> int | None:
+    """
+        古い書式の採点 ( 0〜4 の点数 ) を、今の書式と同じ % に直す
+        今の書式の % は 0 / 25 / 50 / 75 / 100 のいずれかで、点数 × 25 と一致する。
+        Args:
+            score : 採点の文字列 ( "0"〜"4" / "X" / "-" )
+        Returns:
+            int | None : % の値。"X" ( Through など ) や "-" は採点なしとして None
+    """
+    return int(score) * 25 if score.isdigit() else None
+
+def __convert_old_turn(turn: str) -> str | None:
+    """
+        古い書式の回転を "cw" / "ccw" に直す
+
+        回転を "In" / "Out" ( インターン / アウトターン ) で書いており、
+        実際の回転方向は投げる選手の利き手で変わる ( 右利きの In と左利きの Out が時計回り ) 。
+        この大会の Results Book には利き手が載っていないため、全員右利きと仮定して
+        In → cw、Out → ccw とする。
+        Args:
+            turn : 回転の文字列 ( "↻" / "↺" / "In" / "Out" )
+        Returns:
+            str | None : "cw" / "ccw"。該当しなければ None
+    """
+    if turn in ("↻", "In"):
+        return "cw"
+    if turn in ("↺", "Out"):
+        return "ccw"
+    return None
+
+# 種別の表記ゆれ → 正規の表記 ( 2017年以降の大会の表記 )
+# 大会ごとにどちらか一方の表記だけが使われている ( 混在はしない ) 。
+_SHOT_TYPE_ALIASES = {
+    "through": "Through",                          # WMDCC2016
+    "Takeout": "Take-out",                         # 2014〜2015年 ( ECC2014 / 2015、WMCC2014、WWCC2015、OWG2014 )
+    "Double Takeout": "Double Take-out",           # 同上
+    "Promotion Takeout": "Promotion Take-out",     # 同上
+    "Wick/Softpeeling": "Wick / Soft Peeling",     # OWG2006 / 2010
+}
+
+
+def __normalize_shot_type(shot_type: str) -> str:
+    """
+        種別の表記ゆれを、正規の表記 ( 2017年以降の大会の表記 ) に揃える
+
+        古い大会では "Takeout" ( 正規は "Take-out" ) のように表記が違い、
+        SQL で種別を集計すると別の種別に分かれてしまうため直す ( issue #27 ) 。
+        Args:
+            shot_type : 種別の文字列
+        Returns:
+            str : 表記を揃えた種別
+    """
+    return _SHOT_TYPE_ALIASES.get(shot_type, shot_type)
 
 def save_images(doc: fitz.Document, output_dir: Path, save_num: int) -> int:
     """
@@ -283,7 +375,7 @@ def save_images(doc: fitz.Document, output_dir: Path, save_num: int) -> int:
     for pn in range(doc.page_count):
         page = doc[pn]
         text = page.get_text()
-        if "Shot by Shot" in text:
+        if is_shot_by_shot_page(text):
             shotbyshot_list, _ = __extract_images(doc, page)
 
             for i,img in enumerate(shotbyshot_list, start=1):
@@ -348,6 +440,33 @@ def __extract_images(doc: fitz.Document, page: fitz.Page) -> tuple[list[dict[str
                 "is_negated": is_negated,
             })
     return shotbyshot_list, bboxes
+
+# 同じ行とみなす y 座標の差 ( pt ) 。図の行の間隔は約 180pt あり、
+# 同じ行の図のずれは 0.1pt 未満なので、その間の値にしておく
+_SAME_ROW_TOLERANCE = 20
+
+
+def __sort_by_rows(images: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+        図を投球順 ( 上の行から順に、行の中は左から右 ) に並べる
+
+        2014〜2016 年の Results Book ( WWCC2015・WMCC2014 / 2016・ECC2015・OWG2014 ) では、
+        同じ行の図の y 座標がわずかに ( 0.1pt 未満 ) ずれている。そのまま ( y, x ) で並べると、
+        y が少し小さい図が行の先頭に来て、投球と盤面の組み合わせがずれる ( issue #27 ) 。
+        そのため、y の差が _SAME_ROW_TOLERANCE 以内の図を同じ行にまとめてから x で並べる。
+        Args:
+            images : 図の辞書 ( "x" / "y" に左上の座標を持つ ) のリスト
+        Returns:
+            list[dict[str, Any]] : 投球順に並べた図のリスト
+    """
+    rows: list[list[dict[str, Any]]] = []
+    for im in sorted(images, key=lambda im: im["y"]):
+        # 行の先頭の図との y の差が小さければ同じ行、大きければ新しい行
+        if rows and im["y"] - rows[-1][0]["y"] <= _SAME_ROW_TOLERANCE:
+            rows[-1].append(im)
+        else:
+            rows.append([im])
+    return [im for row in rows for im in sorted(row, key=lambda im: im["x"])]
 
 # 数値に変換できるものは int、できないものはそのまま
 def __try_int(x: Any) -> int | str:
@@ -444,10 +563,30 @@ def __black_more_than_white(image_array: np.ndarray) -> bool:
 def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
     """
     Game ResultsページのテキストからLSD情報を抽出する
+
+    Args:
+        text : Game Results ページのテキスト ( pdfplumber で抽出したもの )
+    Returns:
+        list[dict[str, str | float | None]] : 1行 ( 赤・黄の選手1人ずつ ) ごとの
+            選手名と LSD の距離 ( cm ) の辞書のリスト
     """
     results = []
     # 数値+cm を抽出する正規表現
     lsd_value_pattern = re.compile(r'(\d+\.?\d*)\s*cm')
+
+    def clean_player(name: str) -> str:
+        """選手名の先頭にある回転の記号 ( ↻ / ↺ ) を取り除く
+
+        WMCC2016・ECC2015・WMDCC2016 などの古い書式では、LSD の行が
+        "↻ KOE K 12.0cm ↻ PFISTER E 16.4cm" のように、選手名の前に回転の記号付きで抽出される。
+        記号は LSD を投げた回転だが、lsds テーブルに回転の列が無いため、今は名前から取り除くだけにする。
+
+        Args:
+            name : 抽出した選手名
+        Returns:
+            str : 記号を取り除いた選手名
+        """
+        return re.sub(r'^[↻↺]\s*', '', name)
 
     lines = text.split('\n')
     lsd_section = False
@@ -468,9 +607,9 @@ def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
     for line in lsd_lines:
         matches = list(lsd_value_pattern.finditer(line))
         if len(matches) >= 2:
-            player_red = line[:matches[0].start()].strip()
+            player_red = clean_player(line[:matches[0].start()].strip())
             lsd_red = float(matches[0].group(1))
-            player_yellow = line[matches[0].end():matches[1].start()].strip()
+            player_yellow = clean_player(line[matches[0].end():matches[1].start()].strip())
             lsd_yellow = float(matches[1].group(1))
 
             results.append({
@@ -480,7 +619,7 @@ def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
                 "lsd_yellow": lsd_yellow,
             })
         elif len(matches) == 1:
-            player_red = line[:matches[0].start()].strip()
+            player_red = clean_player(line[:matches[0].start()].strip())
             lsd_red = float(matches[0].group(1))
             results.append({
                 "player_red": player_red,
@@ -489,7 +628,54 @@ def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
                 "lsd_yellow": None,
             })
 
+    # 今の形で1件も取れなかった場合は、合計が先に書かれた古い形 ( WWCC2015 ) を試す
+    if not results:
+        results = __extract_lsd_total_first(lines)
+
     return results
+
+
+# 古い形 ( WWCC2015 ) の LSD の行。1行目に両チームの「合計・1投目・選手」、2行目に「2投目・選手」が並ぶ。
+#   1行目: "Last Stone Draw: 291.1cm 105.7cm ↻ LIU S Last Stone Draw: 48.7cm 33.9cm ↻ SIDOROVA A"
+#   2行目: "185.4cm ↺ WANG R 14.8cm ↺ GALKINA E"
+# 回転の記号 ( ↻ / ↺ ) は lsds に列が無いため読み飛ばす。
+# 合計しか書かれていない形 ( WMCC2014 の "Last Stone Draw: 185.4 cm (out)" ) は、
+# 1行目に値が2つ続かないため一致しない ( 選手ごとの値が無いので取れなくてよい ) 。
+_LSD_TOTAL_FIRST_ROW1_RE = re.compile(
+    r'Last Stone Draw:\s*[\d.]+\s*cm\s+([\d.]+)\s*cm\s+(?:[↻↺]\s*)?(.+?)\s+'
+    r'Last Stone Draw:\s*[\d.]+\s*cm\s+([\d.]+)\s*cm\s+(?:[↻↺]\s*)?(.+?)\s*$'
+)
+_LSD_TOTAL_FIRST_ROW2_RE = re.compile(
+    r'^\s*([\d.]+)\s*cm\s+(?:[↻↺]\s*)?(.+?)\s+([\d.]+)\s*cm\s+(?:[↻↺]\s*)?(.+?)\s*$'
+)
+
+
+def __extract_lsd_total_first(lines: list[str]) -> list[dict[str, str | float | None]]:
+    """
+    合計が先に書かれた古い形 ( WWCC2015 ) の LSD を読む
+
+    Args:
+        lines : Game Results ページのテキストを行に分けたもの
+    Returns:
+        list[dict[str, str | float | None]] : 1行 ( 赤・黄の選手1人ずつ ) ごとの
+            選手名と LSD の距離 ( cm ) の辞書のリスト。この形でなければ空リスト
+    """
+    for i, line in enumerate(lines[:-1]):
+        m1 = _LSD_TOTAL_FIRST_ROW1_RE.search(line)
+        if not m1:
+            continue
+        rows = [m1.groups()]
+        # 2投目は次の行に書かれている
+        m2 = _LSD_TOTAL_FIRST_ROW2_RE.match(lines[i + 1])
+        if m2:
+            rows.append(m2.groups())
+        return [{
+            "player_red": red_name,
+            "player_yellow": yellow_name,
+            "lsd_red": float(red_cm),
+            "lsd_yellow": float(yellow_cm),
+        } for red_cm, red_name, yellow_cm, yellow_name in rows]
+    return []
 
 
 def extract_year_and_category(game: str, is_md: bool) -> tuple[int | None, str | None]:
@@ -533,6 +719,92 @@ def extract_year_and_category(game: str, is_md: bool) -> tuple[int | None, str |
 
 
 # ============================================================================
+# ページの種類の判定 ( Game Results / Shot by Shot )
+#   ページ本文に "Game Results" / "Shot by Shot" の文字があるかで判定する。
+#   ただし五輪の Results Book には、文字はあっても試合のページではないページがある ( issue #27 ) 。
+#     - 目次 ( Table of Contents ) : 項目名として両方の文字が並ぶ ( OWG2010 / 2014 / 2018 。
+#       OWG2018 は目次が11ページあり、見出しは1ページ目にしか無い )
+#     - Game Results の2ページ目以降 : 注記や凡例だけのページ ( OWG2018 の改訂版 )
+#   これらを試合のページとして扱うと、チーム名も得点も無い試合が作られたり、
+#   直後の Shot by Shot で「エンドが見つからない」として止まったりする。
+# ============================================================================
+
+# ページ番号の表記 ( 例: "Page 2/10" )
+_PAGE_NUMBER_RE = re.compile(r"Page (\d+)/(\d+)")
+
+
+def __is_table_of_contents(text: str) -> bool:
+    """
+        目次のページかどうかを判定する
+
+        次のどちらかに当てはまれば目次とみなす。
+        - 冒頭に見出し "Table of Contents" がある
+          ( OWG2010 は "TABLE OF CONTENTS" と大文字のため、大文字小文字は区別しない )
+        - "Game Results" と "Shot by Shot" の両方を含む
+          ( 目次には両方が項目として並ぶ。OWG2018 の目次は2ページ目以降に見出しが無いため、
+          こちらで見分ける。試合のページで両方を含むものは全 PDF で無い )
+
+        Args:
+            text : ページのテキスト
+        Returns:
+            bool : 目次のページなら True
+    """
+    low = text.lower()
+    head = low.splitlines()[:10]
+    if any("table of contents" in line for line in head):
+        return True
+    return "game results" in low and "shot by shot" in low
+
+
+def is_game_results_page(text: str) -> bool:
+    """
+        新しい試合の始まりとなる Game Results のページかどうかを判定する
+
+        Game Results が複数ページにわたる場合 ( "Page 2/2" など ) 、2ページ目以降は
+        注記や凡例だけなので、新しい試合としては扱わない。
+        OWG2010 は見出しが "GAME RESULTS" と大文字のため、大文字小文字は区別しない。
+
+        Args:
+            text : ページのテキスト
+        Returns:
+            bool : 試合の Game Results の1ページ目なら True
+    """
+    if "game results" not in text.lower() or __is_table_of_contents(text):
+        return False
+    m = _PAGE_NUMBER_RE.search(text)
+    return m is None or int(m.group(1)) == 1
+
+
+def extract_page_team_codes(text: str) -> set[str]:
+    """
+        ページの見出しにあるチームの3文字コードを取り出す
+
+        Shot by Shot の見出しには "RUS - Russian Federation    0 + 0 (this end) = 0" のように、
+        行頭に「3文字コード + ' - ' + 国名」の行が両チーム分ある。選手の行は
+        "RUS: NAME" ( コロン区切り ) なので一致しない。
+
+        Args:
+            text : ページのテキスト
+        Returns:
+            set[str] : 見つかったチームの3文字コード。見つからなければ空集合
+    """
+    return set(re.findall(r"^\s*([A-Z]{3}) - \S", text, re.MULTILINE))
+
+
+def is_shot_by_shot_page(text: str) -> bool:
+    """
+        Shot by Shot ( 1エンド分の図 ) のページかどうかを判定する
+        OWG2010 は見出しが "GAME - SHOT BY SHOT" と大文字のため、大文字小文字は区別しない。
+
+        Args:
+            text : ページのテキスト
+        Returns:
+            bool : Shot by Shot のページなら True ( 目次は除く )
+    """
+    return "shot by shot" in text.lower() and not __is_table_of_contents(text)
+
+
+# ============================================================================
 # 大会メタデータ ( 最終順位・会場 ) の抽出
 #   Final Standings ページ ( 五輪以外の世界選手権系フォーマット ) を対象とする。
 # ============================================================================
@@ -548,6 +820,26 @@ _STANDINGS_ROW_RE = re.compile(r'^\s*(\d+|Gold|Silver|Bronze)\s+([A-Z]{3}) - ', 
 _MEDAL_TO_RANK = {"Gold": 1, "Silver": 2, "Bronze": 3}
 
 
+def __is_final_standings_header(line: str) -> bool:
+    """
+        1行が見出し "Final Standings" の行かどうかを判定する。
+
+        改訂された順位表では、見出しと同じ行の右側に "REVISED" の印が並ぶ
+        ( 例: WMCC2021 の "Final Standings      REVISED" ) 。そのため行全体ではなく、
+        2つ以上続く空白で区切った先頭の要素だけを見出しと比べる。
+        OWG2010 は "FINAL STANDINGS / CLASSEMENT FINAL" と大文字で仏語が併記されるため、
+        大文字小文字は区別せず、" / " より前を見出しとして比べる ( issue #27 ) 。
+
+        Args:
+            line: strip 済みの1行。
+
+        Returns:
+            bool: 行の先頭の要素が "Final Standings" なら True。
+    """
+    first = re.split(r"\s{2,}", line)[0]
+    return first.split(" / ")[0].strip().lower() == "final standings"
+
+
 def is_standings_page(page: fitz.Page) -> bool:
     """
         指定ページが最終順位表 ( Final Standings ) のページかどうかを判定する。
@@ -561,17 +853,19 @@ def is_standings_page(page: fitz.Page) -> bool:
             page: PyMuPDF のページオブジェクト。
 
         Returns:
-            bool: 単独見出し行 "Final Standings" と列見出し行 ( Rank/Team/Player を含む )
-                の両方を冒頭に持つ場合 True。
+            bool: 見出し行 "Final Standings" ( 右側に改訂の印が並ぶ場合を含む ) と
+                列見出し行 ( Team/Player を含む ) の両方を冒頭に持つ場合 True。
     """
     # 読み順を座標でソートして取得し、各行を strip する
     lines = [line.strip() for line in page.get_text(sort=True).split("\n")]
     head = lines[:14]  # 見出しはページ冒頭付近。多言語ページでも 14 行以内に収まる
-    has_fs_header = any(line == "Final Standings" for line in head)
+    has_fs_header = any(__is_final_standings_header(line) for line in head)
     # 列見出しは 4人制 = "Players"、MD = "Female Player / Male Player" と表記が分かれるため、
     # 複数形の "s" を含めず "Player" で両対応する ( 古い MD の検出漏れ対策 )。
+    # 2016年以前の古い書式 ( ECC2014〜2016、WMCC2014、OWG2014 ) は列見出しに "Rank" が無い
+    # ( "Team  Players  Position - Function" ) ため、"Rank" は条件に含めない ( issue #27 ) 。
     has_column_header = any(
-        ("Rank" in line and "Team" in line and "Player" in line) for line in head
+        ("Team" in line and "Player" in line) for line in head
     )
     return has_fs_header and has_column_header
 
@@ -637,7 +931,7 @@ def extract_venue(page: fitz.Page, game: str = "") -> tuple[str | None, str | No
     # "Final Standings" 見出し行より前で、カンマを含み Championship を含まない行を会場行とみなす
     venue_line = None
     for line in lines:
-        if line == "Final Standings":
+        if __is_final_standings_header(line):
             break
         if "," in line and "Championship" not in line:
             venue_line = line
@@ -673,15 +967,28 @@ def extract_venue(page: fitz.Page, game: str = "") -> tuple[str | None, str | No
 # 順位行の先頭部分: 行頭順位 ( 数値 or メダル語 ) + 3文字コード + " - " + 国名。
 # standings と同じ判定基準だが、ここでは「順位行かどうか」の判別と、行から
 # チームコードを取り出す目的で使う ( 国名以降には選手名と Position-Function が続く )。
-_ROSTER_RANK_HEAD_RE = re.compile(r'^\s*(?:\d+|Gold|Silver|Bronze)\s+([A-Z]{3}) - \S')
+# 失格などで順位の欄が略号になっているチームもある ( OWG2018 MD の "DQB OAR - ..." ) ため、
+# 英大文字 2〜4 文字の略号もチームの始まりと認識する。認識しないと、そのチームの選手が
+# 直前のチームの選手として入ってしまう。順位 ( _STANDINGS_ROW_RE ) には数字が無いので入れない。
+_ROSTER_RANK_HEAD_RE = re.compile(r'^\s*(?:\d+|Gold|Silver|Bronze|[A-Z]{2,4})\s+([A-Z]{3}) - \S')
 
 # Position-Function 記号 ( 行末 )。
 #   - 投球順のみ: "1" 〜 "4"
 #   - 投球順 + 役割: "4 S" ( Skip ) / "3 V" ( Vice-skip )。順序は <数字> <英字>。
 #   - 役割のみ: "A" ( Alternate ) / "C" ( Coach )
+#   - 古い書式 ( WMCC2014 ) では役割を略さず "4 Skip" / "3 Vice-Skip" と書く ( issue #27 )
+#   - OWG2010 は投球順を言葉で "Fourth" / "Third" / "Second" / "Lead" / "Alternate" と書き、
+#     スキップの行だけ投球順の語が "Skip" に置き換わる ( issue #27 。読み方は extract_rosters を参照 )
 # 選手名にも空白が含まれる ( 例: "PETERSSON Haavard Vad" ) ため、
 # 「行末に固定された Position-Function 記号」だけを取り出す形でアンカーする。
-_POS_FUNC_TAIL_RE = re.compile(r'\s+([1-4])(?:\s+([SV]))?\s*$|\s+([AC])\s*$')
+# 長い表記を先に試すため、選択肢は "Vice-Skip" / "Skip" を "S" / "V" より前に置く。
+_POS_FUNC_TAIL_RE = re.compile(
+    r'\s+([1-4])(?:\s+(Vice-Skip|Skip|S|V))?\s*$|\s+([AC])\s*$'
+    r'|\s+(Fourth|Third|Second|Lead|Skip|Alternate)\s*$'
+)
+
+# 投球順を言葉で書いた表記 ( OWG2010 ) と投球順の対応
+_POSITION_WORDS = {"Fourth": 4, "Third": 3, "Second": 2, "Lead": 1}
 
 # 降格マーカー ( 行末 )。A-Division 大会の降格圏チームのスキップ行 ( 順位行 ) には
 # Position-Function の後ろに ">B" ( B-Division へ降格 ) が付く ( 例: "... 4 S   >B" )。
@@ -744,7 +1051,37 @@ def extract_rosters(page: fitz.Page) -> list[dict[str, str | int | None]]:
         parsed["team"] = current_team
         rosters.append(parsed)
 
+    __fill_skip_positions(rosters)
     return rosters
+
+
+def __fill_skip_positions(rosters: list[dict[str, str | int | None]]) -> None:
+    """
+        投球順が書かれていないスキップ ( OWG2010 の "Skip" ) に、投球順を入れる
+
+        OWG2010 の順位表は、投球順を "Fourth" / "Third" / "Second" / "Lead" で書き、
+        スキップの行だけその語が "Skip" に置き換わる。そのため、チームの 1〜4 番のうち
+        欠けている投球順が、スキップの投球順になる ( 例: SUI は Second が欠けていて、
+        スキップの EGGLER が 2 番目を投げている。Shot by Shot の投球順と全員一致を確認済み ) 。
+        欠けている投球順が 1 つに決まらない場合は None のまま残し、警告を出す。
+
+        Args:
+            rosters : extract_rosters で読んだ選手のリスト ( その場で書き換える )
+        Returns:
+            None
+    """
+    teams = {r["team"] for r in rosters}
+    for team in teams:
+        members = [r for r in rosters if r["team"] == team]
+        unknown = [r for r in members if r["is_skip"] and r["position"] is None]
+        if not unknown:
+            continue
+        used = {r["position"] for r in members if r["position"] in (1, 2, 3, 4)}
+        missing = [p for p in (1, 2, 3, 4) if p not in used]
+        if len(unknown) == 1 and len(missing) == 1:
+            unknown[0]["position"] = missing[0]
+        else:
+            logger.warning(f"Roster: could not decide the skip's position (team={team}, missing={missing})")
 
 
 def __parse_roster_player(segment: str, is_rank_line: bool) -> dict[str, str | int | None] | None:
@@ -793,7 +1130,7 @@ def __parse_roster_player(segment: str, is_rank_line: bool) -> dict[str, str | i
         return None
 
     # --- Position-Function 記号を解釈する ---
-    # マッチは2系統: (group1,group2) = <数字>,<S/V?> または (group3) = A/C
+    # マッチは3系統: (group1,group2) = <数字>,<S/V?> / (group3) = A/C / (group4) = 言葉の投球順 ( OWG2010 )
     position: int | None = None
     is_skip = 0
     is_vice = 0
@@ -802,12 +1139,24 @@ def __parse_roster_player(segment: str, is_rank_line: bool) -> dict[str, str | i
     if m.group(1) is not None:
         # 投球順あり ( 1-4 )。role は player。S/V があれば skip/vice フラグを立てる。
         position = int(m.group(1))
-        func = m.group(2)  # "S" / "V" / None
-        if func == "S":
+        func = m.group(2)  # "S" / "V" / "Skip" / "Vice-Skip" / None
+        if func in ("S", "Skip"):
             is_skip = 1
-        elif func == "V":
+        elif func in ("V", "Vice-Skip"):
             is_vice = 1
         role = "player"
+    elif m.group(4) is not None:
+        # 投球順を言葉で書いた表記 ( OWG2010 ) 。
+        word = m.group(4)
+        role = "player"
+        if word in _POSITION_WORDS:
+            position = _POSITION_WORDS[word]
+        elif word == "Alternate":
+            position = 5
+        else:
+            # "Skip" は投球順が書かれていないので、ここでは position を None のままにし、
+            # extract_rosters でチームの欠けている投球順を入れる
+            is_skip = 1
     else:
         # 役割のみ ( A = Alternate / C = Coach )。
         func = m.group(3)
@@ -916,6 +1265,10 @@ def extract_rosters_md(page: fitz.Page) -> list[dict[str, str | None]]:
             # 新MD: 1行1人。順位行・継続行いずれも1人分の選手行として扱う。
             p = __parse_roster_md_new(line, is_rank_line=bool(head))
             if p is None:
+                # 性別の欄が略号 ( 例: 失格の "DQB" ) に置き換わった選手の行は、性別が書かれて
+                # いないので登録しない。気づけるように警告だけ残す ( OWG2018 MD の OAR ) 。
+                if re.search(r'^\s*[A-Z][A-Za-z\'\-]+ .+\s{2,}[A-Z]{2,4}\s*$', line):
+                    logger.warning(f"MD roster row without gender skipped (team={current_team}): {line.strip()!r}")
                 continue
             p["team"] = current_team
             rosters.append(p)
