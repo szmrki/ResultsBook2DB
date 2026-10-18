@@ -760,6 +760,22 @@ def is_game_results_page(text: str) -> bool:
     return m is None or int(m.group(1)) == 1
 
 
+def extract_page_team_codes(text: str) -> set[str]:
+    """
+        ページの見出しにあるチームの3文字コードを取り出す
+
+        Shot by Shot の見出しには "RUS - Russian Federation    0 + 0 (this end) = 0" のように、
+        行頭に「3文字コード + ' - ' + 国名」の行が両チーム分ある。選手の行は
+        "RUS: NAME" ( コロン区切り ) なので一致しない。
+
+        Args:
+            text : ページのテキスト
+        Returns:
+            set[str] : 見つかったチームの3文字コード。見つからなければ空集合
+    """
+    return set(re.findall(r"^\s*([A-Z]{3}) - \S", text, re.MULTILINE))
+
+
 def is_shot_by_shot_page(text: str) -> bool:
     """
         Shot by Shot ( 1エンド分の図 ) のページかどうかを判定する

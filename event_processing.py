@@ -37,7 +37,7 @@ from detection import create_pseudo_label
 from pdf_tools import (
     extract_game_result, extract_lsd_from_text, extract_rosters, extract_rosters_md,
     extract_shotbyshot, extract_standings, extract_venue, extract_year_and_category,
-    is_game_results_page, is_shot_by_shot_page, is_standings_page, save_images,
+    extract_page_team_codes, is_game_results_page, is_shot_by_shot_page, is_standings_page, save_images,
 )
 from prepositioned import correct_prepositioned_stones
 from stone_matching import MD_PROTECTED_SHOTS, correct_equidistant_blank_hammer, label_event_ends
@@ -357,6 +357,17 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
                 # 該当するエンドを探し、ページ情報を記録する
                 if current_game is None:
                     raise RuntimeError(f"Shot by Shot page {page_num} appeared before any Game Results page")
+                # ページの見出しのチームが、いま処理中の試合 ( 直前の Game Results ) と違う場合は、
+                # その試合の Game Results が PDF に無いということなので、警告を出してページを飛ばす。
+                # ( OWG2014 女子の RUS 対 USA は Game Results が無く、Shot by Shot が2回入っている。
+                # 飛ばさないと前の試合のエンドとして扱い、エンドが見つからずに大会ごと止まる )
+                # チームが読めない場合は判断できないので、これまでどおり処理する。
+                page_teams = extract_page_team_codes(text)
+                game_teams = {current_game.team_red, current_game.team_yellow}
+                if page_teams and None not in game_teams and page_teams != game_teams:
+                    logger.warning(f"[{game_context}] Shot by Shot page {page_num} is for {sorted(page_teams)}, "
+                                   f"not this game. Skipped (its Game Results page is missing).")
+                    continue
                 end = next((e for e in current_game.ends if e.number == num_end), None)
                 if end is None:
                     raise RuntimeError(f"[{game_context}] End {num_end} not found for Shot by Shot page {page_num}")
