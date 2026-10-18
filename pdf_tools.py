@@ -954,7 +954,10 @@ def extract_venue(page: fitz.Page, game: str = "") -> tuple[str | None, str | No
 # 順位行の先頭部分: 行頭順位 ( 数値 or メダル語 ) + 3文字コード + " - " + 国名。
 # standings と同じ判定基準だが、ここでは「順位行かどうか」の判別と、行から
 # チームコードを取り出す目的で使う ( 国名以降には選手名と Position-Function が続く )。
-_ROSTER_RANK_HEAD_RE = re.compile(r'^\s*(?:\d+|Gold|Silver|Bronze)\s+([A-Z]{3}) - \S')
+# 失格などで順位の欄が略号になっているチームもある ( OWG2018 MD の "DQB OAR - ..." ) ため、
+# 英大文字 2〜4 文字の略号もチームの始まりと認識する。認識しないと、そのチームの選手が
+# 直前のチームの選手として入ってしまう。順位 ( _STANDINGS_ROW_RE ) には数字が無いので入れない。
+_ROSTER_RANK_HEAD_RE = re.compile(r'^\s*(?:\d+|Gold|Silver|Bronze|[A-Z]{2,4})\s+([A-Z]{3}) - \S')
 
 # Position-Function 記号 ( 行末 )。
 #   - 投球順のみ: "1" 〜 "4"
@@ -1249,6 +1252,10 @@ def extract_rosters_md(page: fitz.Page) -> list[dict[str, str | None]]:
             # 新MD: 1行1人。順位行・継続行いずれも1人分の選手行として扱う。
             p = __parse_roster_md_new(line, is_rank_line=bool(head))
             if p is None:
+                # 性別の欄が略号 ( 例: 失格の "DQB" ) に置き換わった選手の行は、性別が書かれて
+                # いないので登録しない。気づけるように警告だけ残す ( OWG2018 MD の OAR ) 。
+                if re.search(r'^\s*[A-Z][A-Za-z\'\-]+ .+\s{2,}[A-Z]{2,4}\s*$', line):
+                    logger.warning(f"MD roster row without gender skipped (team={current_team}): {line.strip()!r}")
                 continue
             p["team"] = current_team
             rosters.append(p)
