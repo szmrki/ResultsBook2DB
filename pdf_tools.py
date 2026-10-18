@@ -736,10 +736,11 @@ def __is_table_of_contents(text: str) -> bool:
         Returns:
             bool : 目次のページなら True
     """
-    head = text.splitlines()[:10]
-    if any("table of contents" in line.lower() for line in head):
+    low = text.lower()
+    head = low.splitlines()[:10]
+    if any("table of contents" in line for line in head):
         return True
-    return "Game Results" in text and "Shot by Shot" in text
+    return "game results" in low and "shot by shot" in low
 
 
 def is_game_results_page(text: str) -> bool:
@@ -748,13 +749,14 @@ def is_game_results_page(text: str) -> bool:
 
         Game Results が複数ページにわたる場合 ( "Page 2/2" など ) 、2ページ目以降は
         注記や凡例だけなので、新しい試合としては扱わない。
+        OWG2010 は見出しが "GAME RESULTS" と大文字のため、大文字小文字は区別しない。
 
         Args:
             text : ページのテキスト
         Returns:
             bool : 試合の Game Results の1ページ目なら True
     """
-    if "Game Results" not in text or __is_table_of_contents(text):
+    if "game results" not in text.lower() or __is_table_of_contents(text):
         return False
     m = _PAGE_NUMBER_RE.search(text)
     return m is None or int(m.group(1)) == 1
@@ -779,13 +781,14 @@ def extract_page_team_codes(text: str) -> set[str]:
 def is_shot_by_shot_page(text: str) -> bool:
     """
         Shot by Shot ( 1エンド分の図 ) のページかどうかを判定する
+        OWG2010 は見出しが "GAME - SHOT BY SHOT" と大文字のため、大文字小文字は区別しない。
 
         Args:
             text : ページのテキスト
         Returns:
             bool : Shot by Shot のページなら True ( 目次は除く )
     """
-    return "Shot by Shot" in text and not __is_table_of_contents(text)
+    return "shot by shot" in text.lower() and not __is_table_of_contents(text)
 
 
 # ============================================================================
@@ -811,6 +814,8 @@ def __is_final_standings_header(line: str) -> bool:
         改訂された順位表では、見出しと同じ行の右側に "REVISED" の印が並ぶ
         ( 例: WMCC2021 の "Final Standings      REVISED" ) 。そのため行全体ではなく、
         2つ以上続く空白で区切った先頭の要素だけを見出しと比べる。
+        OWG2010 は "FINAL STANDINGS / CLASSEMENT FINAL" と大文字で仏語が併記されるため、
+        大文字小文字は区別せず、" / " より前を見出しとして比べる ( issue #27 ) 。
 
         Args:
             line: strip 済みの1行。
@@ -818,7 +823,8 @@ def __is_final_standings_header(line: str) -> bool:
         Returns:
             bool: 行の先頭の要素が "Final Standings" なら True。
     """
-    return re.split(r"\s{2,}", line)[0] == "Final Standings"
+    first = re.split(r"\s{2,}", line)[0]
+    return first.split(" / ")[0].strip().lower() == "final standings"
 
 
 def is_standings_page(page: fitz.Page) -> bool:
@@ -955,10 +961,18 @@ _ROSTER_RANK_HEAD_RE = re.compile(r'^\s*(?:\d+|Gold|Silver|Bronze)\s+([A-Z]{3}) 
 #   - 投球順 + 役割: "4 S" ( Skip ) / "3 V" ( Vice-skip )。順序は <数字> <英字>。
 #   - 役割のみ: "A" ( Alternate ) / "C" ( Coach )
 #   - 古い書式 ( WMCC2014 ) では役割を略さず "4 Skip" / "3 Vice-Skip" と書く ( issue #27 )
+#   - OWG2010 は投球順を言葉で "Fourth" / "Third" / "Second" / "Lead" / "Alternate" と書き、
+#     スキップの行だけ投球順の語が "Skip" に置き換わる ( issue #27 。読み方は extract_rosters を参照 )
 # 選手名にも空白が含まれる ( 例: "PETERSSON Haavard Vad" ) ため、
 # 「行末に固定された Position-Function 記号」だけを取り出す形でアンカーする。
 # 長い表記を先に試すため、選択肢は "Vice-Skip" / "Skip" を "S" / "V" より前に置く。
-_POS_FUNC_TAIL_RE = re.compile(r'\s+([1-4])(?:\s+(Vice-Skip|Skip|S|V))?\s*$|\s+([AC])\s*$')
+_POS_FUNC_TAIL_RE = re.compile(
+    r'\s+([1-4])(?:\s+(Vice-Skip|Skip|S|V))?\s*$|\s+([AC])\s*$'
+    r'|\s+(Fourth|Third|Second|Lead|Skip|Alternate)\s*$'
+)
+
+# 投球順を言葉で書いた表記 ( OWG2010 ) と投球順の対応
+_POSITION_WORDS = {"Fourth": 4, "Third": 3, "Second": 2, "Lead": 1}
 
 # 降格マーカー ( 行末 )。A-Division 大会の降格圏チームのスキップ行 ( 順位行 ) には
 # Position-Function の後ろに ">B" ( B-Division へ降格 ) が付く ( 例: "... 4 S   >B" )。
@@ -1021,7 +1035,37 @@ def extract_rosters(page: fitz.Page) -> list[dict[str, str | int | None]]:
         parsed["team"] = current_team
         rosters.append(parsed)
 
+    __fill_skip_positions(rosters)
     return rosters
+
+
+def __fill_skip_positions(rosters: list[dict[str, str | int | None]]) -> None:
+    """
+        投球順が書かれていないスキップ ( OWG2010 の "Skip" ) に、投球順を入れる
+
+        OWG2010 の順位表は、投球順を "Fourth" / "Third" / "Second" / "Lead" で書き、
+        スキップの行だけその語が "Skip" に置き換わる。そのため、チームの 1〜4 番のうち
+        欠けている投球順が、スキップの投球順になる ( 例: SUI は Second が欠けていて、
+        スキップの EGGLER が 2 番目を投げている。Shot by Shot の投球順と全員一致を確認済み ) 。
+        欠けている投球順が 1 つに決まらない場合は None のまま残し、警告を出す。
+
+        Args:
+            rosters : extract_rosters で読んだ選手のリスト ( その場で書き換える )
+        Returns:
+            None
+    """
+    teams = {r["team"] for r in rosters}
+    for team in teams:
+        members = [r for r in rosters if r["team"] == team]
+        unknown = [r for r in members if r["is_skip"] and r["position"] is None]
+        if not unknown:
+            continue
+        used = {r["position"] for r in members if r["position"] in (1, 2, 3, 4)}
+        missing = [p for p in (1, 2, 3, 4) if p not in used]
+        if len(unknown) == 1 and len(missing) == 1:
+            unknown[0]["position"] = missing[0]
+        else:
+            logger.warning(f"Roster: could not decide the skip's position (team={team}, missing={missing})")
 
 
 def __parse_roster_player(segment: str, is_rank_line: bool) -> dict[str, str | int | None] | None:
@@ -1070,7 +1114,7 @@ def __parse_roster_player(segment: str, is_rank_line: bool) -> dict[str, str | i
         return None
 
     # --- Position-Function 記号を解釈する ---
-    # マッチは2系統: (group1,group2) = <数字>,<S/V?> または (group3) = A/C
+    # マッチは3系統: (group1,group2) = <数字>,<S/V?> / (group3) = A/C / (group4) = 言葉の投球順 ( OWG2010 )
     position: int | None = None
     is_skip = 0
     is_vice = 0
@@ -1085,6 +1129,18 @@ def __parse_roster_player(segment: str, is_rank_line: bool) -> dict[str, str | i
         elif func in ("V", "Vice-Skip"):
             is_vice = 1
         role = "player"
+    elif m.group(4) is not None:
+        # 投球順を言葉で書いた表記 ( OWG2010 ) 。
+        word = m.group(4)
+        role = "player"
+        if word in _POSITION_WORDS:
+            position = _POSITION_WORDS[word]
+        elif word == "Alternate":
+            position = 5
+        else:
+            # "Skip" は投球順が書かれていないので、ここでは position を None のままにし、
+            # extract_rosters でチームの欠けている投球順を入れる
+            is_skip = 1
     else:
         # 役割のみ ( A = Alternate / C = Coach )。
         func = m.group(3)
