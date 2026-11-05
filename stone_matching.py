@@ -475,6 +475,7 @@ def _end_already_labeled(conn: sqlite3.Connection, end_id: int) -> bool:
 # 通常、先攻後攻が入れ替わる ( utils.get_hammer が一律で反転させている )。
 # しかし例外があり、「ブランクだが、ハウス内に両チームのストーンが残っていて
 # 完全に同距離だったため誰も得点しなかった」ケースでは先攻後攻が変わらない。
+# ( 2018 年 10 月改定後の規則。それより前の大会には適用しない: postprocess_event を参照 )
 #
 # get_hammer が呼ばれる時点ではまだ石座標が抽出されていないため、
 # 石座標 ( stones ) が出揃った後・同定 ( label_event_ends ) の直前に、

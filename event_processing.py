@@ -688,7 +688,7 @@ def postprocess_event(conn: sqlite3.Connection, event_id: int, is_md: bool,
                       should_stop: StopCallback | None = None) -> int:
     """
         書き込み済みの1大会に対して、DB 上の後処理を行う。コミットはしない ( 呼び出し側で行う ) 。
-        MD ではハンマー補正を行い、その後、全エンドのストーン同定 ( shot_order の決定 ) を行う。
+        MD ではハンマー補正 ( 2019 年以降の大会のみ ) を行い、その後、全エンドのストーン同定 ( shot_order の決定 ) を行う。
 
         Args:
             conn : SQLite の接続
@@ -707,10 +707,15 @@ def postprocess_event(conn: sqlite3.Connection, event_id: int, is_md: bool,
     # 先攻後攻が交代しないため、get_hammer が入れた誤った交代を打ち消す。
     # 同定は color_hammer を色制約に使うため、補正は同定より前に行う。
     if is_md:
-        corrected = correct_equidistant_blank_hammer(conn, event_id)
-        if corrected:
-            name = conn.execute("SELECT name FROM events WHERE id = ?", (event_id,)).fetchone()[0]
-            logger.info(f"[{name}] Equidistant-blank hammer correction: {corrected} ends updated.")
+        name, year = conn.execute("SELECT name, year FROM events WHERE id = ?", (event_id,)).fetchone()
+        # 同距離ブランクでハンマーが移らないのは 2018 年 10 月の規則改定から。
+        # 2018 年以前の MD の大会 ( 2 月・4 月開催 ) は旧規則なので補正しない。
+        if year is not None and year <= 2018:
+            logger.info(f"[{name}] Pre-2018-10 rules: skipped equidistant-blank hammer correction.")
+        else:
+            corrected = correct_equidistant_blank_hammer(conn, event_id)
+            if corrected:
+                logger.info(f"[{name}] Equidistant-blank hammer correction: {corrected} ends updated.")
 
     # ストーン同定: この大会の全エンドについて各石の投球元(shot_order)を特定する
     notify(0, "Matching stones...")
