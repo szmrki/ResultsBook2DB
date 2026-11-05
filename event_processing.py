@@ -60,7 +60,8 @@ StopCallback = Callable[[], bool]
 # 解析結果ファイル ( JSON ) の形式のバージョン。形式を変えたら上げる
 #   1 : 最初の形式
 #   2 : MD の事前配置石を、通常の石と同じ項目 ( 距離・ハウス内・シート内 ) で持つようにした ( issue #15 )
-RESULT_FORMAT_VERSION = 2
+#   3 : LSD の回転 ( turn ) を持つようにした ( issue #32 )
+RESULT_FORMAT_VERSION = 3
 
 
 # ─── 解析結果の入れ物 ─────────────────────────────────────────────────────────
@@ -114,6 +115,7 @@ class LsdResult:
     team: str | None
     player_name: str
     distance_cm: float
+    turn: str | None = None  # 'cw' / 'ccw' 。決められない場合は None
 
 
 @dataclass
@@ -322,9 +324,9 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
                     lsd_results = extract_lsd_from_text(plumber_text)
                     for lsd in lsd_results:
                         if lsd["player_red"] and lsd["lsd_red"] is not None:
-                            current_game.lsds.append(LsdResult(team_red_code, lsd["player_red"], lsd["lsd_red"]))
+                            current_game.lsds.append(LsdResult(team_red_code, lsd["player_red"], lsd["lsd_red"], lsd["turn"]))
                         if lsd["player_yellow"] and lsd["lsd_yellow"] is not None:
-                            current_game.lsds.append(LsdResult(team_yellow_code, lsd["player_yellow"], lsd["lsd_yellow"]))
+                            current_game.lsds.append(LsdResult(team_yellow_code, lsd["player_yellow"], lsd["lsd_yellow"], lsd["turn"]))
 
                 # ---------------------------
                 # ここでエンドの情報をまとめて作る ( この時点では page は None )
@@ -630,8 +632,8 @@ def write_event(conn: sqlite3.Connection, result: EventResult) -> tuple[int, dic
                         (event_id, g.page, g.team_red, g.team_yellow, g.final_score_red, g.final_score_yellow))
         game_id = cur.lastrowid #game_idを取得
 
-        cur.executemany("INSERT INTO lsds (game_id, team, player_name, distance_cm) VALUES (?, ?, ?, ?)",
-                        [(game_id, lsd.team, lsd.player_name, lsd.distance_cm) for lsd in g.lsds])
+        cur.executemany("INSERT INTO lsds (game_id, team, player_name, distance_cm, turn) VALUES (?, ?, ?, ?, ?)",
+                        [(game_id, lsd.team, lsd.player_name, lsd.distance_cm, lsd.turn) for lsd in g.lsds])
 
         for end in g.ends:
             if is_md:

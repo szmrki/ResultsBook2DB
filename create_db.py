@@ -49,9 +49,10 @@ def set_tables(dbname: str | Path, is_md: bool = False) -> None:
         )
         # ストーンマッチングは shot_id での絞り込みを多数回実行するため、インデックスを張る
         cur.execute("CREATE INDEX IF NOT EXISTS idx_stones_shot_id ON stones(shot_id)")
+        # turn: LSD を投げた回転 ( 'cw' / 'ccw' ) 。成績表は各チーム 1 行目が cw、2 行目が ccw の順で書かれている
         cur.execute(
             '''CREATE TABLE lsds (id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL,
-            team STRING, player_name STRING, distance_cm FLOAT,
+            team STRING, player_name STRING, distance_cm FLOAT, turn STRING,
             FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
         )
         # standings: 大会の最終順位 ( 1大会×複数チーム )。events に直接ぶら下がる独立した枝。

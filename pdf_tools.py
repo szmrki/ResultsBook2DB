@@ -568,7 +568,7 @@ def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
         text : Game Results ページのテキスト ( pdfplumber で抽出したもの )
     Returns:
         list[dict[str, str | float | None]] : 1行 ( 赤・黄の選手1人ずつ ) ごとの
-            選手名と LSD の距離 ( cm ) の辞書のリスト
+            選手名・LSD の距離 ( cm ) ・回転 ( turn ) の辞書のリスト
     """
     results = []
     # 数値+cm を抽出する正規表現
@@ -579,7 +579,7 @@ def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
 
         WMCC2016・ECC2015・WMDCC2016 などの古い書式では、LSD の行が
         "↻ KOE K 12.0cm ↻ PFISTER E 16.4cm" のように、選手名の前に回転の記号付きで抽出される。
-        記号は LSD を投げた回転だが、lsds テーブルに回転の列が無いため、今は名前から取り除くだけにする。
+        回転は行の順で決める ( __add_lsd_turn ) ので、記号は名前から取り除くだけにする。
 
         Args:
             name : 抽出した選手名
@@ -632,13 +632,30 @@ def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
     if not results:
         results = __extract_lsd_total_first(lines)
 
-    return results
+    return __add_lsd_turn(results)
+
+
+def __add_lsd_turn(rows: list[dict[str, str | float | None]]) -> list[dict[str, str | float | None]]:
+    """
+    LSD の各行に回転 ( turn ) を付ける
+
+    LSD は各チームが cw → ccw の順に投げ、成績表もその順 ( 1 行目 cw・2 行目 ccw ) で書かれている。
+    2006〜2026 年の全 109 冊で、記号 ( 文字・画像 ) がこの順であることを確かめた ( #32 ) 。
+    行が 2 行でない場合は、どの行がどの回転か決められないので None にする。
+
+    Args:
+        rows : extract_lsd_from_text が読んだ行の辞書のリスト ( 上の行から順 )
+    Returns:
+        list[dict[str, str | float | None]] : 各行に "turn" ( 'cw' / 'ccw' / None ) を足したリスト
+    """
+    turns = ["cw", "ccw"] if len(rows) == 2 else [None] * len(rows)
+    return [{**row, "turn": turn} for row, turn in zip(rows, turns)]
 
 
 # 古い形 ( WWCC2015 ) の LSD の行。1行目に両チームの「合計・1投目・選手」、2行目に「2投目・選手」が並ぶ。
 #   1行目: "Last Stone Draw: 291.1cm 105.7cm ↻ LIU S Last Stone Draw: 48.7cm 33.9cm ↻ SIDOROVA A"
 #   2行目: "185.4cm ↺ WANG R 14.8cm ↺ GALKINA E"
-# 回転の記号 ( ↻ / ↺ ) は lsds に列が無いため読み飛ばす。
+# 回転は行の順で決める ( __add_lsd_turn ) ので、記号 ( ↻ / ↺ ) は読み飛ばす。
 # 合計しか書かれていない形 ( WMCC2014 の "Last Stone Draw: 185.4 cm (out)" ) は、
 # 1行目に値が2つ続かないため一致しない ( 選手ごとの値が無いので取れなくてよい ) 。
 _LSD_TOTAL_FIRST_ROW1_RE = re.compile(

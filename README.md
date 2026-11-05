@@ -121,6 +121,7 @@ SQLite データベース (`.db`) は以下のテーブルで構成されてい�
 | `team` | チーム名 |
 | `player_name` | 選手名 |
 | `distance_cm` | LSD計測値 (cm) |
+| `turn` | 回転方向 (cw, ccw) |
 
 ### `ends` (エンド情報)
 
