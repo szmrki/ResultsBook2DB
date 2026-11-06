@@ -35,7 +35,7 @@ from ultralytics import YOLO
 
 from detection import create_pseudo_label
 from pdf_tools import (
-    extract_game_result, extract_lsd_from_text, extract_rosters, extract_rosters_md,
+    extract_game_header, extract_game_result, extract_lsd_from_text, extract_rosters, extract_rosters_md,
     extract_shotbyshot, extract_standings, extract_venue, extract_year_and_category,
     extract_page_team_codes, is_game_results_page, is_shot_by_shot_page, is_standings_page, save_images,
 )
@@ -60,7 +60,7 @@ StopCallback = Callable[[], bool]
 # 解析結果ファイル ( JSON ) の形式のバージョン。形式を変えたら上げる
 #   1 : 最初の形式
 #   2 : MD の事前配置石を、通常の石と同じ項目 ( 距離・ハウス内・シート内 ) で持つようにした ( issue #15 )
-#   3 : LSD の回転 ( turn ) を持つようにした ( issue #32 )
+#   3 : LSD の回転 ( turn ) と、試合の日付・開始時刻・ステージ・シート・グループを持つようにした ( issue #32 / #30 )
 RESULT_FORMAT_VERSION = 3
 
 
@@ -126,6 +126,13 @@ class GameResult:
     team_yellow: str | None
     final_score_red: int | None
     final_score_yellow: int | None
+    # Game Results の見出しから取る項目 ( pdf_tools.extract_game_header を参照 ) 。取れなければ None
+    date: str | None = None         # 'YYYY-MM-DD'
+    start_time: str | None = None   # 'HH:MM' ( 現地時刻 )
+    stage: str | None = None        # Results Book の表記のまま ( 例: 'Round Robin Session 11' )
+    stage_type: str | None = None   # 'round_robin' / 'playoff' / 'relegation' / 'other'
+    sheet: str | None = None
+    group_name: str | None = None
     lsds: list[LsdResult] = field(default_factory=list)
     ends: list[EndResult] = field(default_factory=list)
 
@@ -315,7 +322,8 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
                 team_red_code = to_team_code(team_red)
                 team_yellow_code = to_team_code(team_yellow)
                 current_game = GameResult(page=page_num, team_red=team_red_code, team_yellow=team_yellow_code,
-                                          final_score_red=fin_red, final_score_yellow=fin_yellow)
+                                          final_score_red=fin_red, final_score_yellow=fin_yellow,
+                                          **extract_game_header(text))
                 result.games.append(current_game)
 
                 # --- LSDデータを抽出 ---
@@ -600,9 +608,16 @@ def write_event(conn: sqlite3.Connection, result: EventResult) -> tuple[int, dic
     is_md = result.is_md
     cur = conn.cursor()
 
-    #eventテーブルに大会名、年、カテゴリ、会場情報を記述
-    cur.execute('INSERT INTO events(name, year, category, location, venue) VALUES (?, ?, ?, ?, ?)',
-                (result.name, result.year, result.category, result.location, result.venue))
+    # 大会の開始日・終了日は、最初と最後の試合の日付とする。表紙の期間は練習日を含んだり、
+    # 最終日に試合が無かったりするため使わない。'YYYY-MM-DD' は文字列の順がそのまま日付の順になる
+    game_dates = [g.date for g in result.games if g.date is not None]
+    start_date = min(game_dates) if game_dates else None
+    end_date = max(game_dates) if game_dates else None
+
+    #eventテーブルに大会名、年、開催期間、カテゴリ、会場情報を記述
+    cur.execute('''INSERT INTO events(name, year, start_date, end_date, category, location, venue)
+                VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                (result.name, result.year, start_date, end_date, result.category, result.location, result.venue))
     event_id = cur.lastrowid #event_idを取得
 
     # 順位 ( standings )
@@ -627,9 +642,11 @@ def write_event(conn: sqlite3.Connection, result: EventResult) -> tuple[int, dic
     prepositioned_map: dict[int, list[dict[str, Any]] | None] = {}
 
     for g in result.games:
-        cur.execute("""INSERT INTO games(event_id, page, team_red, team_yellow,
-                        final_score_red, final_score_yellow) VALUES (?, ?, ?, ?, ?, ?)""",
-                        (event_id, g.page, g.team_red, g.team_yellow, g.final_score_red, g.final_score_yellow))
+        cur.execute("""INSERT INTO games(event_id, page, date, start_time, stage_type, stage, group_name, sheet,
+                        team_red, team_yellow, final_score_red, final_score_yellow)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (event_id, g.page, g.date, g.start_time, g.stage_type, g.stage, g.group_name, g.sheet,
+                         g.team_red, g.team_yellow, g.final_score_red, g.final_score_yellow))
         game_id = cur.lastrowid #game_idを取得
 
         cur.executemany("INSERT INTO lsds (game_id, team, player_name, distance_cm, turn) VALUES (?, ?, ?, ?, ?)",

@@ -822,6 +822,125 @@ def is_shot_by_shot_page(text: str) -> bool:
 
 
 # ============================================================================
+# Game Results の見出し ( 日付・開始時刻・ステージ・シート・グループ ) の抽出 ( issue #30 )
+#   見出しはページ先頭の十数行にあり、書式は次のとおり。
+#     今の書式     : "Start Time 19:00" / "FRI 5 APR 2024" / "Round Robin Session 11 - Sheet A"
+#     MD ( 今 )    : "Round Robin Session 10" と "Group B - Sheet B" が別の行
+#     MD ( 古い )  : "Group-A Round Robin Session 25 - Sheet A" / "Round Robin Session 28, Group-B - Sheet A"
+#     OWG2006/2010 : 大文字で英仏併記 ( "ROUND ROBIN SESSION 7 - SHEET C" /
+#                    "SAT 20 FEB 2010 / SAM 20 FÉV 2010     START TIME / DÉBUT  9:00" )
+#     OWG2014 以降 : 現地語・仏語の併記行 ( " / " を含む ) とは別に、英語の行もある
+#   全 109 冊の試合ページ 6,395 枚で、日付・開始時刻・ステージは全ページで取れることを確かめた。
+#   シートは決勝などで見出しに書かれていないことがある ( その場合 None ) 。
+# ============================================================================
+
+# 見出しとみなす先頭の行数
+_HEADER_LINES = 16
+# 曜日つきの日付 ( 例: "FRI 5 APR 2024" ) 。曜日の無い "29 OCT 10:36" ( 改訂日時 ) には一致しない
+_GAME_DATE_RE = re.compile(r"\b(?:MON|TUE|WED|THU|FRI|SAT|SUN)\s+(\d{1,2})\s+"
+                           r"(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+(\d{4})\b")
+_MONTHS = {m: i for i, m in enumerate(
+    ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], start=1)}
+# 開始時刻。OWG2006 は "START TIME / DEBUT" とアクセントが無い
+_START_TIME_RE = re.compile(r"START TIME(?:\s*/\s*D[ÉE]BUT)?\s+(\d{1,2}):(\d{2})", re.IGNORECASE)
+# 英語のステージ行の書き出し。決勝トーナメントの方式は大会ごとに違うため、表記の種類が多い
+_STAGE_LINE_RE = re.compile(
+    r"^(?:Round Robin|Group|Tie-?breaker|Page Play-?off|Play-?off|Qualification|Quarter-?final|Semi-?final"
+    r"|Gold Medal|Bronze Medal|Finals?(?:\s|$)|\d/\d Final|[AB]-side|Relegation|Ranking|Classification"
+    r"|World Challenge)", re.IGNORECASE)
+# 行末のシート ( 例: " - Sheet A" ) 。ECC2017 には B ディビジョンの "Sheet J" がある
+_SHEET_RE = re.compile(r"\s*[-,]\s*Sheet\s+([A-J])\s*$", re.IGNORECASE)
+# グループ ( 例: "Group B" / "Group-A" ) 。前のカンマ ( "Session 28, Group-B" ) もまとめて取り除く
+_GROUP_RE = re.compile(r"(?:,\s*)?\bGroup[- ]([A-H])\b\s*", re.IGNORECASE)
+# WMDCC2021 は "Group" の語が無く、セッションの記号にグループが入る ( 例: "Round Robin Session A1" )
+_SESSION_GROUP_RE = re.compile(r"\bSession\s+([A-H])\d+\b", re.IGNORECASE)
+
+
+def extract_game_header(text: str) -> dict[str, str | None]:
+    """
+        Game Results のページの見出しから、日付・開始時刻・ステージ・シート・グループを取り出す
+
+        ステージは英語の行を Results Book の表記のまま使い、シートとグループの部分だけを取り除く。
+        併記の行 ( " / " を含む ) は現地語や仏語なので使わない。整えるのは連続する空白と
+        合字の "ﬁ" ( OWG2022 ) だけで、大文字の表記 ( OWG2006 / 2010 ) はそのまま残す。
+
+        Args:
+            text : ページのテキスト ( PyMuPDF で抽出したもの )
+        Returns:
+            dict[str, str | None] : 次のキーを持つ辞書。取れなかった項目は None
+                date        : 'YYYY-MM-DD'
+                start_time  : 'HH:MM' ( 現地時刻 )
+                stage       : 例 'Round Robin Session 11' / 'Semi-final' / 'Gold Medal Game'
+                stage_type  : classify_stage の分類
+                sheet       : 例 'A'
+                group_name  : 例 'B'
+    """
+    head = [line.strip() for line in text.splitlines() if line.strip()][:_HEADER_LINES]
+
+    date = start_time = None
+    for line in head:
+        if date is None and (m := _GAME_DATE_RE.search(line.upper())):
+            date = f"{int(m.group(3)):04d}-{_MONTHS[m.group(2)]:02d}-{int(m.group(1)):02d}"
+        if start_time is None and (m := _START_TIME_RE.search(line)):
+            start_time = f"{int(m.group(1)):02d}:{m.group(2)}"
+
+    # ステージの行は 1 行とは限らない ( 今の MD は "Round Robin Session 10" と "Group B - Sheet B" が別の行 )
+    sheet = group_name = None
+    parts: list[str] = []
+    for line in head:
+        line = re.sub(r"\s+", " ", line.replace("ﬁ", "fi"))
+        if not _STAGE_LINE_RE.match(line) or " / " in line:
+            continue
+        if (m := _SHEET_RE.search(line)):
+            sheet = m.group(1).upper()
+            line = line[:m.start()]
+        if (m := _GROUP_RE.search(line)):
+            group_name = m.group(1).upper()
+            line = (line[:m.start()] + " " + line[m.end():]).strip()
+        if line:
+            parts.append(line)
+    stage = " ".join(parts) or None
+    if group_name is None and stage and (m := _SESSION_GROUP_RE.search(stage)):
+        group_name = m.group(1).upper()
+
+    return {"date": date, "start_time": start_time, "stage": stage,
+            "stage_type": classify_stage(stage), "sheet": sheet, "group_name": group_name}
+
+
+def classify_stage(stage: str | None) -> str | None:
+    """
+        ステージの表記を、大会の方式によらない 4 つの分類にまとめる
+
+        - round_robin : 予選
+        - playoff     : 予選のあと優勝を争う試合 ( タイブレーク・ページプレーオフ・準決勝・決勝など。
+                        OQE のプレーオフ、MD の旧方式 ( 2016〜2019 年 ) の 1/8 Final と A-side も含む )
+        - relegation  : 出場枠を失うかどうかをかけた試合 ( MD の Relegation Game、ECC の World Challenge )
+        - other       : 順位を決めるだけの試合 ( MD の旧方式の B-side、Rank / Classification、Ranking Game )
+
+        表記だけでは見分けられない試合は割り切って playoff にしている。
+        ( WMDCC2017 の "Finals" には 5〜10 位の決定戦も含まれる。WMDCC2016 の "Qualification Game" は予選前の試合 )
+
+        Args:
+            stage : extract_game_header で取り出したステージ
+        Returns:
+            str | None : 分類。どれにも当てはまらない表記なら None
+    """
+    if stage is None:
+        return None
+    s = stage.lower()
+    if s.startswith("round robin"):
+        return "round_robin"
+    if "relegation" in s or "world challenge" in s:
+        return "relegation"
+    # "A-side Rank 5-6" や "A-side Classification 5-8" は優勝争いではないため、A-side より先に判定する
+    if "b-side" in s or "rank" in s or "classification" in s:
+        return "other"
+    if re.search(r"tie-?breaker|play-?off|qualification|quarter-?final|semi-?final|medal game|final|a-side", s):
+        return "playoff"
+    return None
+
+
+# ============================================================================
 # 大会メタデータ ( 最終順位・会場 ) の抽出
 #   Final Standings ページ ( 五輪以外の世界選手権系フォーマット ) を対象とする。
 # ============================================================================
