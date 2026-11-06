@@ -35,7 +35,7 @@ from ultralytics import YOLO
 
 from detection import create_pseudo_label
 from pdf_tools import (
-    extract_game_result, extract_lsd_from_text, extract_rosters, extract_rosters_md,
+    extract_game_header, extract_game_result, extract_lsd_from_text, extract_rosters, extract_rosters_md,
     extract_shotbyshot, extract_standings, extract_venue, extract_year_and_category,
     extract_page_team_codes, is_game_results_page, is_shot_by_shot_page, is_standings_page, save_images,
 )
@@ -60,7 +60,9 @@ StopCallback = Callable[[], bool]
 # 解析結果ファイル ( JSON ) の形式のバージョン。形式を変えたら上げる
 #   1 : 最初の形式
 #   2 : MD の事前配置石を、通常の石と同じ項目 ( 距離・ハウス内・シート内 ) で持つようにした ( issue #15 )
-RESULT_FORMAT_VERSION = 2
+#   3 : LSD の回転 ( turn ) 、試合の日付・開始時刻・ステージ・シート・グループ、投球の注記 ( notes ) を
+#       持つようにした ( issue #32 / #30 / #35 )
+RESULT_FORMAT_VERSION = 3
 
 
 # ─── 解析結果の入れ物 ─────────────────────────────────────────────────────────
@@ -88,6 +90,7 @@ class ShotResult:
     type: str | None
     turn: str | None
     percent_score: Any
+    notes: str | None = None  # 図の下の注記 ( 例: 'Time-out' ) 。pdf_tools.__read_shot_notes を参照
     stones: list[StoneResult] = field(default_factory=list)
 
 
@@ -114,6 +117,7 @@ class LsdResult:
     team: str | None
     player_name: str
     distance_cm: float
+    turn: str | None = None  # 'cw' / 'ccw' 。決められない場合は None
 
 
 @dataclass
@@ -124,6 +128,13 @@ class GameResult:
     team_yellow: str | None
     final_score_red: int | None
     final_score_yellow: int | None
+    # Game Results の見出しから取る項目 ( pdf_tools.extract_game_header を参照 ) 。取れなければ None
+    date: str | None = None         # 'YYYY-MM-DD'
+    start_time: str | None = None   # 'HH:MM' ( 現地時刻 )
+    stage: str | None = None        # Results Book の表記のまま ( 例: 'Round Robin Session 11' )
+    stage_type: str | None = None   # 'round_robin' / 'playoff' / 'relegation' / 'other'
+    sheet: str | None = None
+    group_name: str | None = None
     lsds: list[LsdResult] = field(default_factory=list)
     ends: list[EndResult] = field(default_factory=list)
 
@@ -313,7 +324,8 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
                 team_red_code = to_team_code(team_red)
                 team_yellow_code = to_team_code(team_yellow)
                 current_game = GameResult(page=page_num, team_red=team_red_code, team_yellow=team_yellow_code,
-                                          final_score_red=fin_red, final_score_yellow=fin_yellow)
+                                          final_score_red=fin_red, final_score_yellow=fin_yellow,
+                                          **extract_game_header(text))
                 result.games.append(current_game)
 
                 # --- LSDデータを抽出 ---
@@ -322,9 +334,9 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
                     lsd_results = extract_lsd_from_text(plumber_text)
                     for lsd in lsd_results:
                         if lsd["player_red"] and lsd["lsd_red"] is not None:
-                            current_game.lsds.append(LsdResult(team_red_code, lsd["player_red"], lsd["lsd_red"]))
+                            current_game.lsds.append(LsdResult(team_red_code, lsd["player_red"], lsd["lsd_red"], lsd["turn"]))
                         if lsd["player_yellow"] and lsd["lsd_yellow"] is not None:
-                            current_game.lsds.append(LsdResult(team_yellow_code, lsd["player_yellow"], lsd["lsd_yellow"]))
+                            current_game.lsds.append(LsdResult(team_yellow_code, lsd["player_yellow"], lsd["lsd_yellow"], lsd["turn"]))
 
                 # ---------------------------
                 # ここでエンドの情報をまとめて作る ( この時点では page は None )
@@ -395,9 +407,10 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
                     if info is not None: #正常時
                         shot_type = info["type"]; percent_score = info["score"]
                         turn = info["turn"]; team = info["team"]; player_name = info["player"]
+                        notes = info["notes"]
                     else: #ショット情報が取れない場合はNULLとし、ストーン配置のみ保存する
                         shot_type = None; percent_score = None
-                        turn = None; team = None; player_name = None
+                        turn = None; team = None; player_name = None; notes = None
                         logger.warning(f"[{game_context}] End {num_end} - Shot {shot_num} - Shot info not found")
 
                     try:
@@ -406,7 +419,7 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
                         logger.warning(f"[{game_context}] End {num_end} - Shot {shot_num} - Shot color not found")
                         shot_color = None
                     shot = ShotResult(number=shot_num, color=shot_color, team=team, player_name=player_name,
-                                      type=shot_type, turn=turn, percent_score=percent_score)
+                                      type=shot_type, turn=turn, percent_score=percent_score, notes=notes)
 
                     if stones is not None: #正常時
                         # insheet フラグが立っている行のみ石として保持する
@@ -598,9 +611,16 @@ def write_event(conn: sqlite3.Connection, result: EventResult) -> tuple[int, dic
     is_md = result.is_md
     cur = conn.cursor()
 
-    #eventテーブルに大会名、年、カテゴリ、会場情報を記述
-    cur.execute('INSERT INTO events(name, year, category, location, venue) VALUES (?, ?, ?, ?, ?)',
-                (result.name, result.year, result.category, result.location, result.venue))
+    # 大会の開始日・終了日は、最初と最後の試合の日付とする。表紙の期間は練習日を含んだり、
+    # 最終日に試合が無かったりするため使わない。'YYYY-MM-DD' は文字列の順がそのまま日付の順になる
+    game_dates = [g.date for g in result.games if g.date is not None]
+    start_date = min(game_dates) if game_dates else None
+    end_date = max(game_dates) if game_dates else None
+
+    #eventテーブルに大会名、年、開催期間、カテゴリ、会場情報を記述
+    cur.execute('''INSERT INTO events(name, year, start_date, end_date, category, location, venue)
+                VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                (result.name, result.year, start_date, end_date, result.category, result.location, result.venue))
     event_id = cur.lastrowid #event_idを取得
 
     # 順位 ( standings )
@@ -625,13 +645,15 @@ def write_event(conn: sqlite3.Connection, result: EventResult) -> tuple[int, dic
     prepositioned_map: dict[int, list[dict[str, Any]] | None] = {}
 
     for g in result.games:
-        cur.execute("""INSERT INTO games(event_id, page, team_red, team_yellow,
-                        final_score_red, final_score_yellow) VALUES (?, ?, ?, ?, ?, ?)""",
-                        (event_id, g.page, g.team_red, g.team_yellow, g.final_score_red, g.final_score_yellow))
+        cur.execute("""INSERT INTO games(event_id, page, date, start_time, stage_type, stage, group_name, sheet,
+                        team_red, team_yellow, final_score_red, final_score_yellow)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (event_id, g.page, g.date, g.start_time, g.stage_type, g.stage, g.group_name, g.sheet,
+                         g.team_red, g.team_yellow, g.final_score_red, g.final_score_yellow))
         game_id = cur.lastrowid #game_idを取得
 
-        cur.executemany("INSERT INTO lsds (game_id, team, player_name, distance_cm) VALUES (?, ?, ?, ?)",
-                        [(game_id, lsd.team, lsd.player_name, lsd.distance_cm) for lsd in g.lsds])
+        cur.executemany("INSERT INTO lsds (game_id, team, player_name, distance_cm, turn) VALUES (?, ?, ?, ?, ?)",
+                        [(game_id, lsd.team, lsd.player_name, lsd.distance_cm, lsd.turn) for lsd in g.lsds])
 
         for end in g.ends:
             if is_md:
@@ -664,9 +686,9 @@ def write_event(conn: sqlite3.Connection, result: EventResult) -> tuple[int, dic
 
             for shot in end.shots:
                 cur.execute("""INSERT INTO shots(end_id, number, color, team, player_name,
-                                    type, turn, percent_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                                    type, turn, percent_score, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                                     (end_id, shot.number, shot.color, shot.team, shot.player_name,
-                                    shot.type, shot.turn, shot.percent_score))
+                                    shot.type, shot.turn, shot.percent_score, shot.notes))
                 shot_id = cur.lastrowid #shot_idを取得
 
                 rows = [(shot_id, s.color, s.x, s.y, s.distance_from_center, s.inhouse, s.insheet)

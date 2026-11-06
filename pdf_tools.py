@@ -224,7 +224,7 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
             all_texts : ショットバイショットのすべてのテキスト情報のリスト
         Returns:
             list[dict[str, str | int | None]] :
-                (チーム名, プレイヤー名, ショットタイプ, 回転方向, ショットスコア)の辞書のリスト
+                (チーム名, プレイヤー名, ショットタイプ, 回転方向, ショットスコア, 注記)の辞書のリスト
     """
     score_pattern = re.compile(r"^\d+%$|^-$")
     turn_pattern = ("↺", "↻")
@@ -267,6 +267,7 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
                     "turn": turn,
                     "team": team,
                     "player": player,
+                    "notes": __read_shot_notes(all_texts, i + 4),
                 })
                 i += 4
                 continue
@@ -282,6 +283,7 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
                     "turn": __convert_old_turn(turn),
                     "team": team,
                     "player": player,
+                    "notes": __read_shot_notes(all_texts, i + 4),
                 })
                 i += 4
                 continue
@@ -297,6 +299,7 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
                 "turn": None,  # 欠損扱い
                 "team": team,
                 "player": player,
+                "notes": __read_shot_notes(all_texts, i + 3),
             })
             i += 3
             continue
@@ -359,6 +362,80 @@ def __normalize_shot_type(shot_type: str) -> str:
             str : 表記を揃えた種別
     """
     return _SHOT_TYPE_ALIASES.get(shot_type, shot_type)
+
+
+# ─── 投球ごとの注記 ( issue #35 ) ─────────────────────────────────────────────
+# 注記 ( "Time-out" / "No-Tick Zone violation" など ) は、どの書式でも選手の行のすぐ後ろ、
+# 次の投球番号の行より前に書かれている ( 全 109 冊で確認 ) 。
+
+# 注記の表記ゆれ → 揃えた表記。大文字小文字・ハイフン・空白の違いだけを揃える。
+# 意味の違うもの ( "Hog line violation" = リリースの違反 と "Did not pass the hog line" ) や
+# 言葉の違うもの ( "Played out of ( proper ) rotation" ) は揃えない。
+_NOTE_ALIASES = {
+    "Did not pass the hogline": "Did not pass the hog line",  # 2022〜2026年
+    "Hogline violation": "Hog line violation",              # 2010〜2026年
+    "Free guard zone": "Free Guard Zone",                   # 2006〜2026年
+    "No tick zone": "No-Tick Zone",                         # 2022〜2026年
+    "picked up debris": "Picked up debris",                 # 2006〜2026年 ( 揃える先は 2025年〜の表記 )
+    "burned stone": "Burned stone",                         # 同上
+    "Slow Take-Out": "Slow Take-out",                       # 2006〜2014年
+    "Slow Takeout": "Slow Take-out",                        # 2014〜2017年
+    "measurement": "Measurement",                           # OWG2014
+    "Time Out": "Time-out",                                 # 2019年
+    "Stone re-played": "Stone replayed",                    # 2018年
+    "Soft-Peeling": "Soft Peeling",                         # 種別 "Wick / Soft Peeling" のつづりに合わせる
+}
+# 注記の後ろに続く、注記ではない行の始まり ( ここで読むのをやめる )
+#   古い書式では、ページ最後の投球の後ろに投球番号が無く、次のものが続く:
+#   得点欄の国コード ( "SUI" ) と時刻、凡例 ( "NOTE" / "Points:" / "4 =" / "100%" ) 、
+#   OWG2006 の残り時間 ( "Time left: FIN 64:52, CAN 66:25" ) 、ファイル番号とフッター
+_NOTE_STOP_RE = re.compile(
+    r"^(?:[A-Z]{3}$|[A-Z]{3}: |[A-Z]{3} - |NOTES?$|Note:$|Points:$|\d+ =$|\d+%$|\d+:\d+|Time left"
+    r"|CU[A-Z0-9_\-]+ |Page \d+/\d+|Report Created|End$|End \d)")
+# 1 投分の注記として読む最大の行数 ( 注記は長くても 2 行 )
+_NOTE_MAX_LINES = 4
+
+
+def __read_shot_notes(all_texts: list[str], start: int) -> str | None:
+    """
+        選手の行の後ろから、その投球の注記を読む
+
+        次の投球番号 ( 数字だけの行 ) か、注記ではない行 ( _NOTE_STOP_RE ) の手前までを注記とする。
+        - 2 行に折り返された注記はつなげる ( ";" / "," で始まる行は空白を入れずにつなぐ )
+        - 1 行目の先頭の 1 文字の断片 ( 長い選手名の折り返し。"f" / "t; Time-out" など ) は取り除く
+        - OWG2006 の残り時間が同じ行につながっている場合 ( "Split Time left: ..." ) は、その手前までを使う
+        - "-" だけの行は注記ではないので使わない ( WWCC2025 に 1 件 )
+        - 表記ゆれは _NOTE_ALIASES で揃える。複数の注記の区切り ( "; " / ", " / 空白 ) は書かれたまま残す
+
+        Args:
+            all_texts : Shot by Shot のページのテキストを行に分けたもの
+            start : 選手の行の次の行の位置
+        Returns:
+            str | None : 注記。無ければ None
+    """
+    lines: list[str] = []
+    for line in all_texts[start:start + _NOTE_MAX_LINES]:
+        line = line.strip()
+        if not line:
+            continue
+        if line.isdigit() or _NOTE_STOP_RE.match(line):
+            break
+        if "Time left" in line:
+            lines.append(line.split("Time left")[0].strip().rstrip("|").strip())
+            break
+        lines.append(line)
+
+    if lines:
+        lines[0] = re.sub(r"^.(?=$|[ ;,])", "", lines[0]).strip()
+    notes = ""
+    for line in lines:
+        if not line or line == "-":
+            continue
+        notes += line if not notes or line[0] in ";," else " " + line
+    for alias, canonical in _NOTE_ALIASES.items():
+        notes = notes.replace(alias, canonical)
+    notes = notes.lstrip(";, ")
+    return notes or None
 
 def save_images(doc: fitz.Document, output_dir: Path, save_num: int) -> int:
     """
@@ -568,7 +645,7 @@ def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
         text : Game Results ページのテキスト ( pdfplumber で抽出したもの )
     Returns:
         list[dict[str, str | float | None]] : 1行 ( 赤・黄の選手1人ずつ ) ごとの
-            選手名と LSD の距離 ( cm ) の辞書のリスト
+            選手名・LSD の距離 ( cm ) ・回転 ( turn ) の辞書のリスト
     """
     results = []
     # 数値+cm を抽出する正規表現
@@ -579,7 +656,7 @@ def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
 
         WMCC2016・ECC2015・WMDCC2016 などの古い書式では、LSD の行が
         "↻ KOE K 12.0cm ↻ PFISTER E 16.4cm" のように、選手名の前に回転の記号付きで抽出される。
-        記号は LSD を投げた回転だが、lsds テーブルに回転の列が無いため、今は名前から取り除くだけにする。
+        回転は行の順で決める ( __add_lsd_turn ) ので、記号は名前から取り除くだけにする。
 
         Args:
             name : 抽出した選手名
@@ -632,13 +709,30 @@ def extract_lsd_from_text(text: str) -> list[dict[str, str | float | None]]:
     if not results:
         results = __extract_lsd_total_first(lines)
 
-    return results
+    return __add_lsd_turn(results)
+
+
+def __add_lsd_turn(rows: list[dict[str, str | float | None]]) -> list[dict[str, str | float | None]]:
+    """
+    LSD の各行に回転 ( turn ) を付ける
+
+    LSD は各チームが cw → ccw の順に投げ、成績表もその順 ( 1 行目 cw・2 行目 ccw ) で書かれている。
+    2006〜2026 年の全 109 冊で、記号 ( 文字・画像 ) がこの順であることを確かめた ( #32 ) 。
+    行が 2 行でない場合は、どの行がどの回転か決められないので None にする。
+
+    Args:
+        rows : extract_lsd_from_text が読んだ行の辞書のリスト ( 上の行から順 )
+    Returns:
+        list[dict[str, str | float | None]] : 各行に "turn" ( 'cw' / 'ccw' / None ) を足したリスト
+    """
+    turns = ["cw", "ccw"] if len(rows) == 2 else [None] * len(rows)
+    return [{**row, "turn": turn} for row, turn in zip(rows, turns)]
 
 
 # 古い形 ( WWCC2015 ) の LSD の行。1行目に両チームの「合計・1投目・選手」、2行目に「2投目・選手」が並ぶ。
 #   1行目: "Last Stone Draw: 291.1cm 105.7cm ↻ LIU S Last Stone Draw: 48.7cm 33.9cm ↻ SIDOROVA A"
 #   2行目: "185.4cm ↺ WANG R 14.8cm ↺ GALKINA E"
-# 回転の記号 ( ↻ / ↺ ) は lsds に列が無いため読み飛ばす。
+# 回転は行の順で決める ( __add_lsd_turn ) ので、記号 ( ↻ / ↺ ) は読み飛ばす。
 # 合計しか書かれていない形 ( WMCC2014 の "Last Stone Draw: 185.4 cm (out)" ) は、
 # 1行目に値が2つ続かないため一致しない ( 選手ごとの値が無いので取れなくてよい ) 。
 _LSD_TOTAL_FIRST_ROW1_RE = re.compile(
@@ -802,6 +896,125 @@ def is_shot_by_shot_page(text: str) -> bool:
             bool : Shot by Shot のページなら True ( 目次は除く )
     """
     return "shot by shot" in text.lower() and not __is_table_of_contents(text)
+
+
+# ============================================================================
+# Game Results の見出し ( 日付・開始時刻・ステージ・シート・グループ ) の抽出 ( issue #30 )
+#   見出しはページ先頭の十数行にあり、書式は次のとおり。
+#     今の書式     : "Start Time 19:00" / "FRI 5 APR 2024" / "Round Robin Session 11 - Sheet A"
+#     MD ( 今 )    : "Round Robin Session 10" と "Group B - Sheet B" が別の行
+#     MD ( 古い )  : "Group-A Round Robin Session 25 - Sheet A" / "Round Robin Session 28, Group-B - Sheet A"
+#     OWG2006/2010 : 大文字で英仏併記 ( "ROUND ROBIN SESSION 7 - SHEET C" /
+#                    "SAT 20 FEB 2010 / SAM 20 FÉV 2010     START TIME / DÉBUT  9:00" )
+#     OWG2014 以降 : 現地語・仏語の併記行 ( " / " を含む ) とは別に、英語の行もある
+#   全 109 冊の試合ページ 6,395 枚で、日付・開始時刻・ステージは全ページで取れることを確かめた。
+#   シートは決勝などで見出しに書かれていないことがある ( その場合 None ) 。
+# ============================================================================
+
+# 見出しとみなす先頭の行数
+_HEADER_LINES = 16
+# 曜日つきの日付 ( 例: "FRI 5 APR 2024" ) 。曜日の無い "29 OCT 10:36" ( 改訂日時 ) には一致しない
+_GAME_DATE_RE = re.compile(r"\b(?:MON|TUE|WED|THU|FRI|SAT|SUN)\s+(\d{1,2})\s+"
+                           r"(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+(\d{4})\b")
+_MONTHS = {m: i for i, m in enumerate(
+    ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], start=1)}
+# 開始時刻。OWG2006 は "START TIME / DEBUT" とアクセントが無い
+_START_TIME_RE = re.compile(r"START TIME(?:\s*/\s*D[ÉE]BUT)?\s+(\d{1,2}):(\d{2})", re.IGNORECASE)
+# 英語のステージ行の書き出し。決勝トーナメントの方式は大会ごとに違うため、表記の種類が多い
+_STAGE_LINE_RE = re.compile(
+    r"^(?:Round Robin|Group|Tie-?breaker|Page Play-?off|Play-?off|Qualification|Quarter-?final|Semi-?final"
+    r"|Gold Medal|Bronze Medal|Finals?(?:\s|$)|\d/\d Final|[AB]-side|Relegation|Ranking|Classification"
+    r"|World Challenge)", re.IGNORECASE)
+# 行末のシート ( 例: " - Sheet A" ) 。ECC2017 には B ディビジョンの "Sheet J" がある
+_SHEET_RE = re.compile(r"\s*[-,]\s*Sheet\s+([A-J])\s*$", re.IGNORECASE)
+# グループ ( 例: "Group B" / "Group-A" ) 。前のカンマ ( "Session 28, Group-B" ) もまとめて取り除く
+_GROUP_RE = re.compile(r"(?:,\s*)?\bGroup[- ]([A-H])\b\s*", re.IGNORECASE)
+# WMDCC2021 は "Group" の語が無く、セッションの記号にグループが入る ( 例: "Round Robin Session A1" )
+_SESSION_GROUP_RE = re.compile(r"\bSession\s+([A-H])\d+\b", re.IGNORECASE)
+
+
+def extract_game_header(text: str) -> dict[str, str | None]:
+    """
+        Game Results のページの見出しから、日付・開始時刻・ステージ・シート・グループを取り出す
+
+        ステージは英語の行を Results Book の表記のまま使い、シートとグループの部分だけを取り除く。
+        併記の行 ( " / " を含む ) は現地語や仏語なので使わない。整えるのは連続する空白と
+        合字の "ﬁ" ( OWG2022 ) だけで、大文字の表記 ( OWG2006 / 2010 ) はそのまま残す。
+
+        Args:
+            text : ページのテキスト ( PyMuPDF で抽出したもの )
+        Returns:
+            dict[str, str | None] : 次のキーを持つ辞書。取れなかった項目は None
+                date        : 'YYYY-MM-DD'
+                start_time  : 'HH:MM' ( 現地時刻 )
+                stage       : 例 'Round Robin Session 11' / 'Semi-final' / 'Gold Medal Game'
+                stage_type  : classify_stage の分類
+                sheet       : 例 'A'
+                group_name  : 例 'B'
+    """
+    head = [line.strip() for line in text.splitlines() if line.strip()][:_HEADER_LINES]
+
+    date = start_time = None
+    for line in head:
+        if date is None and (m := _GAME_DATE_RE.search(line.upper())):
+            date = f"{int(m.group(3)):04d}-{_MONTHS[m.group(2)]:02d}-{int(m.group(1)):02d}"
+        if start_time is None and (m := _START_TIME_RE.search(line)):
+            start_time = f"{int(m.group(1)):02d}:{m.group(2)}"
+
+    # ステージの行は 1 行とは限らない ( 今の MD は "Round Robin Session 10" と "Group B - Sheet B" が別の行 )
+    sheet = group_name = None
+    parts: list[str] = []
+    for line in head:
+        line = re.sub(r"\s+", " ", line.replace("ﬁ", "fi"))
+        if not _STAGE_LINE_RE.match(line) or " / " in line:
+            continue
+        if (m := _SHEET_RE.search(line)):
+            sheet = m.group(1).upper()
+            line = line[:m.start()]
+        if (m := _GROUP_RE.search(line)):
+            group_name = m.group(1).upper()
+            line = (line[:m.start()] + " " + line[m.end():]).strip()
+        if line:
+            parts.append(line)
+    stage = " ".join(parts) or None
+    if group_name is None and stage and (m := _SESSION_GROUP_RE.search(stage)):
+        group_name = m.group(1).upper()
+
+    return {"date": date, "start_time": start_time, "stage": stage,
+            "stage_type": classify_stage(stage), "sheet": sheet, "group_name": group_name}
+
+
+def classify_stage(stage: str | None) -> str | None:
+    """
+        ステージの表記を、大会の方式によらない 4 つの分類にまとめる
+
+        - round_robin : 予選
+        - playoff     : 予選のあと優勝を争う試合 ( タイブレーク・ページプレーオフ・準決勝・決勝など。
+                        OQE のプレーオフ、MD の旧方式 ( 2016〜2019 年 ) の 1/8 Final と A-side も含む )
+        - relegation  : 出場枠を失うかどうかをかけた試合 ( MD の Relegation Game、ECC の World Challenge )
+        - other       : 順位を決めるだけの試合 ( MD の旧方式の B-side、Rank / Classification、Ranking Game )
+
+        表記だけでは見分けられない試合は割り切って playoff にしている。
+        ( WMDCC2017 の "Finals" には 5〜10 位の決定戦も含まれる。WMDCC2016 の "Qualification Game" は予選前の試合 )
+
+        Args:
+            stage : extract_game_header で取り出したステージ
+        Returns:
+            str | None : 分類。どれにも当てはまらない表記なら None
+    """
+    if stage is None:
+        return None
+    s = stage.lower()
+    if s.startswith("round robin"):
+        return "round_robin"
+    if "relegation" in s or "world challenge" in s:
+        return "relegation"
+    # "A-side Rank 5-6" や "A-side Classification 5-8" は優勝争いではないため、A-side より先に判定する
+    if "b-side" in s or "rank" in s or "classification" in s:
+        return "other"
+    if re.search(r"tie-?breaker|play-?off|qualification|quarter-?final|semi-?final|medal game|final|a-side", s):
+        return "playoff"
+    return None
 
 
 # ============================================================================

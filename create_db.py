@@ -16,12 +16,20 @@ def set_tables(dbname: str | Path, is_md: bool = False) -> None:
         cur.execute("PRAGMA foreign_keys = ON;")
         # location: 会場所在地 ( 都市/州/国 )。会場名と分離できない場合は会場込みの生文字列。取れなければ NULL
         # venue: 会場名。所在地と分離できた場合のみ格納し、分離困難・未検出なら NULL
+        # start_date / end_date: 最初と最後の試合の日付 ( 'YYYY-MM-DD' ) 。games.date の最小・最大と同じ値
         cur.execute(
             '''CREATE TABLE events(id INTEGER PRIMARY KEY AUTOINCREMENT, name STRING NOT NULL UNIQUE,
-            year INTEGER, category STRING, location STRING, venue STRING)'''
+            year INTEGER, start_date STRING, end_date STRING, category STRING, location STRING, venue STRING)'''
         )
+        # 試合の見出しから取る列 ( 取れなければ NULL ) :
+        #   date       : 'YYYY-MM-DD'。start_time : 'HH:MM' ( 現地時刻 )
+        #   stage_type : 'round_robin' / 'playoff' / 'relegation' / 'other' ( pdf_tools.classify_stage を参照 )
+        #   stage      : Results Book の表記のまま ( 例: 'Round Robin Session 11' / 'Semi-final' )
+        #   group_name : 予選のグループ ( 例: 'A' ) 。グループ分けの無い大会は NULL
+        #   sheet      : シート ( 例: 'A' ) 。決勝などで見出しに書かれていない場合は NULL
         cur.execute(
             '''CREATE TABLE games(id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER NOT NULL, page INTEGER,
+            date STRING, start_time STRING, stage_type STRING, stage STRING, group_name STRING, sheet STRING,
             team_red STRING, team_yellow STRING, final_score_red INTEGER, final_score_yellow INTEGER,
             FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
         )
@@ -37,9 +45,12 @@ def set_tables(dbname: str | Path, is_md: bool = False) -> None:
                 number INTEGER, color_hammer STRING, score_red INTEGER, score_yellow INTEGER,
                 FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
             )
+        # notes: 図の下の注記 ( 例: 'Time-out' / 'No-Tick Zone violation' ) 。無ければ NULL。
+        #        表記ゆれ ( 大文字小文字・ハイフン・空白 ) だけ揃え、複数の注記の区切りは書かれたまま
         cur.execute(
             '''CREATE TABLE shots(id INTEGER PRIMARY KEY AUTOINCREMENT, end_id INTEGER NOT NULL, number INTEGER,
             color STRING, team STRING, player_name STRING, type STRING, turn STRING, percent_score INTEGER,
+            notes STRING,
             FOREIGN KEY(end_id) REFERENCES ends(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
         )
         cur.execute(
@@ -49,9 +60,10 @@ def set_tables(dbname: str | Path, is_md: bool = False) -> None:
         )
         # ストーンマッチングは shot_id での絞り込みを多数回実行するため、インデックスを張る
         cur.execute("CREATE INDEX IF NOT EXISTS idx_stones_shot_id ON stones(shot_id)")
+        # turn: LSD を投げた回転 ( 'cw' / 'ccw' ) 。成績表は各チーム 1 行目が cw、2 行目が ccw の順で書かれている
         cur.execute(
             '''CREATE TABLE lsds (id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL,
-            team STRING, player_name STRING, distance_cm FLOAT,
+            team STRING, player_name STRING, distance_cm FLOAT, turn STRING,
             FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
         )
         # standings: 大会の最終順位 ( 1大会×複数チーム )。events に直接ぶら下がる独立した枝。

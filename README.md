@@ -51,9 +51,11 @@ SQLite データベース (`.db`) は以下のテーブルで構成されてい�
 | `id` | 大会ID (主キー) |
 | `name` | 大会名 (ユニーク属性) |
 | `year` | 開催年 |
+| `start_date` | 開始日 (`YYYY-MM-DD`)。最初の試合が開催された日 |
+| `end_date` | 終了日 (`YYYY-MM-DD`)。最後の試合が開催された日 |
 | `category` | カテゴリー (Men, Women, MD, Junior Men, Junior Women) |
-| `location` | 会場所在地 (都市/州/国)。会場名と分離できない場合は会場込みの生文字列、取得不可なら NULL |
-| `venue` | 会場名。所在地と分離できた場合のみ格納、それ以外は NULL |
+| `location` | 会場所在地 (都市/州/国)。会場名と分離できない場合は会場込みの生文字列 |
+| `venue` | 会場名。所在地と分離できた場合のみ記録 |
 
 > [!IMPORTANT]
 > **PDFファイル名について**  
@@ -107,6 +109,12 @@ SQLite データベース (`.db`) は以下のテーブルで構成されてい�
 | `id` | 試合ID (主キー) |
 | `event_id` | 大会ID (外部キー: `events.id`) |
 | `page` | PDF内の掲載ページ |
+| `date` | 試合日 (`YYYY-MM-DD`) |
+| `start_time` | 開始時刻 (`HH:MM`、現地時刻) |
+| `stage_type` | 試合の段階の分類: `round_robin` (予選) / `playoff` (プレーオフ。タイブレーク・準決勝・決勝など) / `relegation` (出場枠を失うかどうかをかけた試合) / `other` (その他) |
+| `stage` | 試合の段階 (例: `Round Robin Session 11`, `Semi-final`, `Gold Medal Game`) |
+| `group_name` | 予選のグループ (例: `A`) |
+| `sheet` | シート (例: `A`) |
 | `team_red` | 赤ストーンチーム名 |
 | `team_yellow` | 黄ストーンチーム名 |
 | `final_score_red` | 赤ストーンチームの最終スコア |
@@ -121,6 +129,7 @@ SQLite データベース (`.db`) は以下のテーブルで構成されてい�
 | `team` | チーム名 |
 | `player_name` | 選手名 |
 | `distance_cm` | LSD計測値 (cm) |
+| `turn` | 回転方向 (cw, ccw) |
 
 ### `ends` (エンド情報)
 
@@ -148,6 +157,7 @@ SQLite データベース (`.db`) は以下のテーブルで構成されてい�
 | `type` | ショットの種類 |
 | `turn` | 回転方向 (cw, ccw) |
 | `percent_score` | ショットスコア(0, 25, 50, 75, 100) |
+| `notes` | 図の下の注記 (例: `Time-out`, `No-Tick Zone violation`, `Slow Take-out`) |
 
 ### `stones` (ストーン配置情報)
 

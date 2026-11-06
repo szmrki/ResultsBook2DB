@@ -63,7 +63,7 @@ class Worker(QThread):
             cur_init = self.conn.cursor()
             cur_init.execute('''CREATE TABLE IF NOT EXISTS lsds (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER NOT NULL,
-                team STRING, player_name STRING, distance_cm FLOAT,
+                team STRING, player_name STRING, distance_cm FLOAT, turn STRING,
                 FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
             )
             # 既存DB向け: stones.shot_order カラムが無ければ追加
