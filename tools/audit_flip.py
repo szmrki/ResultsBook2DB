@@ -29,7 +29,12 @@ detection.needs_flip は逆さまの図を見分けて180°回転させるが、
     uv run python tools/audit_flip.py --out scratch/flip_audit/after
 
     # PDF を個別に指定する
-    uv run python tools/audit_flip.py --out scratch/flip_audit/after --pdf C:/ResultsBook/data_4p/WJCC2026_ResultsBook_Men.pdf
+    uv run python tools/audit_flip.py --out scratch/flip_audit/after --pdf <PDF_ROOT>/data_4p/WJCC2026_ResultsBook_Men.pdf
+
+PDF の置き場所:
+    --pdf を省略したときは、環境変数 PDF_ROOT のディレクトリの data_*/*.pdf をすべて監査する。
+    リポジトリ直下の .env に書いておけば uv run --env-file .env python tools/audit_flip.py ... で
+    読み込まれる ( .env.example を参照 ) 。
 
 終了コード:
     0 = MISS も undecided も無い / 1 = MISS または undecided がある / 2 = 引数の誤り
@@ -37,6 +42,7 @@ detection.needs_flip は逆さまの図を見分けて180°回転させるが、
 import argparse
 import collections
 import csv
+import os
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -51,9 +57,6 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import detection  # noqa: E402
 import pdf_tools  # noqa: E402
-
-# Results Book の置き場所
-PDF_ROOT = Path("C:/ResultsBook")
 
 # 図の結果の種類 ( 集計と表示の順番に使う )
 STATUSES = ("ok", "MISS", "undecided", "unclear")
@@ -185,14 +188,23 @@ def main() -> None:
     """コマンドライン引数を解釈し、指定された PDF ( 省略時はすべての PDF ) を監査する。"""
     parser = argparse.ArgumentParser(description="盤面の図の上下反転の判定を監査する")
     parser.add_argument("--out", required=True, type=Path, help="結果 ( audit.csv と見本の図 ) の出力先ディレクトリ")
-    parser.add_argument("--pdf", nargs="+", type=Path, help="監査する PDF ( 省略時は C:/ResultsBook/data_* 以下のすべて )")
+    parser.add_argument("--pdf", nargs="+", type=Path, help="監査する PDF ( 省略時は環境変数 PDF_ROOT の data_* 以下のすべて )")
     parser.add_argument("--jobs", type=int, default=4, help="同時に処理する PDF の数 ( 既定: 4 )")
     args = parser.parse_args()
 
-    pdf_paths = args.pdf or sorted(PDF_ROOT.glob("data_*/*.pdf"))
+    pdf_root = None
+    if args.pdf:
+        pdf_paths = args.pdf
+    else:
+        # ローカルのパスをコードに書かないよう、置き場所は環境変数で受け取る ( 既定値は持たせない )
+        pdf_root = os.environ.get("PDF_ROOT")
+        if not pdf_root:
+            print("環境変数 PDF_ROOT が設定されていません ( .env.example を参照 ) 。または --pdf で PDF を指定してください。")
+            sys.exit(2)
+        pdf_paths = sorted(Path(pdf_root).glob("data_*/*.pdf"))
     missing = [p for p in pdf_paths if not p.exists()]
     if not pdf_paths or missing:
-        print(f"PDF が見つかりません: {missing or PDF_ROOT}")
+        print(f"PDF が見つかりません: {missing or pdf_root}")
         sys.exit(2)
 
     args.out.mkdir(parents=True, exist_ok=True)

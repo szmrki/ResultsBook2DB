@@ -13,10 +13,14 @@ compare_db.py: 2つの SQLite DB の中身が同じかどうかを比較する�
     --by-content   : ID ではなく内容 ( 大会名・試合のページ・エンド番号・投球番号 ) で対応づける。
                      行の追加で ID がずれる変更の前後を比べるときに使う。どのエンドが変わったかも一覧で表示する。
 
+列を足す変更の前後を比べるときは --common-columns を付ける。列の構成が違うテーブルでも、
+両方の DB にある列だけで比べる ( 片方にしか無い列は表示するだけで、違いとして数えない ) 。
+
 使い方:
     uv run python tools/compare_db.py db/golden/before/WJCC2022Men.db db/golden/after/WJCC2022Men.db
     uv run python tools/compare_db.py db/golden/before db/golden/after
     uv run python tools/compare_db.py db/golden/before db/golden/after --by-content
+    uv run python tools/compare_db.py db/old.db db/new.db --by-content --common-columns
 
 終了コード:
     0 = すべて一致 / 1 = 違いあり / 2 = 引数の誤り
@@ -76,6 +80,24 @@ def get_columns(conn: sqlite3.Connection, table: str) -> list[str]:
     return [r[1] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()]
 
 
+def common_columns_of(table: str, cols_a: list[str], cols_b: list[str]) -> list[str]:
+    """両方の DB にある列を、比較元の定義順で返す。列の構成が違えば、その旨を表示する。
+
+    Args:
+        table: テーブル名 ( 表示用 )
+        cols_a: 比較元の列名のリスト
+        cols_b: 比較先の列名のリスト
+
+    Returns:
+        list[str]: 両方にある列名のリスト
+    """
+    if cols_a != cols_b:
+        only_a = [c for c in cols_a if c not in cols_b]
+        only_b = [c for c in cols_b if c not in cols_a]
+        print(f"[注意] {table}: 共通の列だけ比べる ( 比較元のみ: {only_a} / 比較先のみ: {only_b} )")
+    return [c for c in cols_a if c in cols_b]
+
+
 def values_equal(a: Any, b: Any, tol: float) -> bool:
     """2つの値が等しいかを判定する。浮動小数点数は誤差 tol までを等しいとみなす。
 
@@ -95,7 +117,8 @@ def values_equal(a: Any, b: Any, tol: float) -> bool:
     return a == b
 
 
-def compare_table(conn_a: sqlite3.Connection, conn_b: sqlite3.Connection, table: str, tol: float) -> list[str]:
+def compare_table(conn_a: sqlite3.Connection, conn_b: sqlite3.Connection, table: str, tol: float,
+                  common_columns: bool = False) -> list[str]:
     """1つのテーブルの中身を比較し、違いの説明を返す。
 
     行は rowid で対応づけて比べる。リファクタリング後も INSERT の順番を変えない方針なので、
@@ -106,6 +129,7 @@ def compare_table(conn_a: sqlite3.Connection, conn_b: sqlite3.Connection, table:
         conn_b: 比較先の DB の接続
         table: テーブル名
         tol: 浮動小数点数の比較で許容する誤差
+        common_columns: True なら、列の構成が違っても両方にある列だけで比べる
 
     Returns:
         list[str]: 違いの説明。一致していれば空のリスト
@@ -114,13 +138,16 @@ def compare_table(conn_a: sqlite3.Connection, conn_b: sqlite3.Connection, table:
 
     cols_a = get_columns(conn_a, table)
     cols_b = get_columns(conn_b, table)
-    if cols_a != cols_b:
+    if cols_a != cols_b and not common_columns:
         diffs.append(f"  列の構成が違う: {cols_a} != {cols_b}")
         return diffs  # 列が違うと行の比較に意味が無いので、ここで打ち切る
+    cols = common_columns_of(table, cols_a, cols_b)
 
     # rowid をキーにした辞書にする。位置で対応づけると、1行の欠けで後ろの行がすべて
-    # ずれて「違う」と判定されてしまうため、同じ rowid の行同士を比べる
-    query = f'SELECT rowid, * FROM "{table}"'
+    # ずれて「違う」と判定されてしまうため、同じ rowid の行同士を比べる。
+    # 列は名前で指定し、両方の DB で同じ並びの値を取り出す
+    col_sql = ", ".join(f'"{c}"' for c in cols)
+    query = f'SELECT rowid, {col_sql} FROM "{table}"'
     rows_a = {r[0]: r[1:] for r in conn_a.execute(query)}
     rows_b = {r[0]: r[1:] for r in conn_b.execute(query)}
     if len(rows_a) != len(rows_b):
@@ -144,7 +171,7 @@ def compare_table(conn_a: sqlite3.Connection, conn_b: sqlite3.Connection, table:
         n_diff_rows += 1
         if shown < MAX_SHOWN_DIFFS:
             # 違う列だけを抜き出して表示する
-            changed = [f"{n}: {x!r} -> {y!r}" for n, x, y in zip(cols_a, row_a, row_b) if not values_equal(x, y, tol)]
+            changed = [f"{n}: {x!r} -> {y!r}" for n, x, y in zip(cols, row_a, row_b) if not values_equal(x, y, tol)]
             diffs.append(f"  rowid={rowid}: " + ", ".join(changed))
             shown += 1
     if n_diff_rows > shown:
@@ -152,7 +179,8 @@ def compare_table(conn_a: sqlite3.Connection, conn_b: sqlite3.Connection, table:
     return diffs
 
 
-def load_by_content(conn: sqlite3.Connection, tables: list[str]) -> dict[str, tuple[list[str], dict[tuple, tuple]]]:
+def load_by_content(conn: sqlite3.Connection, tables: list[str],
+                    only_cols: dict[str, list[str]] | None = None) -> dict[str, tuple[list[str], dict[tuple, tuple]]]:
     """各テーブルの行を、ID ではなく内容から作ったキーで引ける形に読み込む。
 
     キーは「親の行のキー + 親の中でその行を決める値」をつなげたタプルにする。
@@ -162,6 +190,7 @@ def load_by_content(conn: sqlite3.Connection, tables: list[str]) -> dict[str, tu
     Args:
         conn: SQLite の接続
         tables: 読み込むテーブル名 ( CONTENT_TABLES のうち、この DB にあるもの )
+        only_cols: テーブル名 → 値に含める列名のリスト。指定したテーブルは、この列だけをこの順で値にする
 
     Returns:
         dict[str, tuple[list[str], dict[tuple, tuple]]]:
@@ -177,8 +206,9 @@ def load_by_content(conn: sqlite3.Connection, tables: list[str]) -> dict[str, tu
         cols = get_columns(conn, table)
         parent = PARENTS.get(table)
         fk_col = parent[1] if parent else None
-        # 値に含める列 ( ID と親の ID を除いた残り )
-        value_cols = [c for c in cols if c != "id" and c != fk_col]
+        # 値に含める列 ( ID と親の ID を除いた残り ) 。only_cols があれば、その列だけに絞る
+        base_cols = only_cols[table] if only_cols and table in only_cols else cols
+        value_cols = [c for c in base_cols if c != "id" and c != fk_col]
         own_col = OWN_KEY.get(table)
 
         rows: dict[tuple, tuple] = {}
@@ -207,7 +237,8 @@ def load_by_content(conn: sqlite3.Connection, tables: list[str]) -> dict[str, tu
     return loaded
 
 
-def compare_by_content(conn_a: sqlite3.Connection, conn_b: sqlite3.Connection, tol: float, max_ends: int) -> bool:
+def compare_by_content(conn_a: sqlite3.Connection, conn_b: sqlite3.Connection, tol: float, max_ends: int,
+                       common_columns: bool = False) -> bool:
     """2つの DB を、行の内容から作ったキーで対応づけて比較し、結果を表示する。
 
     テーブルごとの違いに加えて、shots / stones の違いをエンド単位にまとめ、
@@ -218,6 +249,7 @@ def compare_by_content(conn_a: sqlite3.Connection, conn_b: sqlite3.Connection, t
         conn_b: 比較先の DB の接続
         tol: 浮動小数点数の比較で許容する誤差
         max_ends: 違い方のパターンごとに表示するエンドの最大数
+        common_columns: True なら、列の構成が違っても両方にある列だけで比べる
 
     Returns:
         bool: すべて一致していれば True
@@ -225,8 +257,12 @@ def compare_by_content(conn_a: sqlite3.Connection, conn_b: sqlite3.Connection, t
     tables_a = set(get_tables(conn_a))
     tables_b = set(get_tables(conn_b))
     tables = [t for t in CONTENT_TABLES if t in tables_a and t in tables_b]
-    data_a = load_by_content(conn_a, tables)
-    data_b = load_by_content(conn_b, tables)
+    # 共通の列だけで比べる場合は、両方の DB で同じ列を同じ順に読み込む
+    only_cols = None
+    if common_columns:
+        only_cols = {t: common_columns_of(t, get_columns(conn_a, t), get_columns(conn_b, t)) for t in tables}
+    data_a = load_by_content(conn_a, tables, only_cols)
+    data_b = load_by_content(conn_b, tables, only_cols)
 
     ok = True
     # エンドのキー ( 大会名, 試合のページ, エンド番号 ) → そのエンドでの違いの数
@@ -287,7 +323,8 @@ def compare_by_content(conn_a: sqlite3.Connection, conn_b: sqlite3.Connection, t
     return ok
 
 
-def compare_db(path_a: Path, path_b: Path, tol: float, by_content: bool = False, max_ends: int = 10) -> bool:
+def compare_db(path_a: Path, path_b: Path, tol: float, by_content: bool = False, max_ends: int = 10,
+               common_columns: bool = False) -> bool:
     """2つの DB ファイルを比較し、結果を表示する。
 
     Args:
@@ -296,6 +333,7 @@ def compare_db(path_a: Path, path_b: Path, tol: float, by_content: bool = False,
         tol: 浮動小数点数の比較で許容する誤差
         by_content: True なら rowid ではなく行の内容で対応づけて比べる
         max_ends: by_content のとき、違い方のパターンごとに表示するエンドの最大数
+        common_columns: True なら、列の構成が違っても両方にある列だけで比べる
 
     Returns:
         bool: すべて一致していれば True
@@ -313,10 +351,10 @@ def compare_db(path_a: Path, path_b: Path, tol: float, by_content: bool = False,
 
         if by_content:
             # sqlite_sequence ( 採番の記録 ) などの内部テーブルは、行数が変われば当然変わるので比べない
-            return compare_by_content(conn_a, conn_b, tol, max_ends) and ok
+            return compare_by_content(conn_a, conn_b, tol, max_ends, common_columns) and ok
 
         for table in sorted(tables_a & tables_b):
-            diffs = compare_table(conn_a, conn_b, table, tol)
+            diffs = compare_table(conn_a, conn_b, table, tol, common_columns)
             if diffs:
                 ok = False
                 print(f"[違い] {table}")
@@ -337,6 +375,8 @@ def main() -> None:
                         help="rowid ではなく行の内容 ( 大会名・試合のページ・エンド番号・投球番号 ) で対応づけて比べる")
     parser.add_argument("--max-ends", type=int, default=10,
                         help="--by-content のとき、違い方のパターンごとに表示するエンドの最大数 ( 既定: 10 )")
+    parser.add_argument("--common-columns", action="store_true",
+                        help="列の構成が違うテーブルでも、両方の DB にある列だけで比べる ( 列を足す変更の前後の比較用 )")
     args = parser.parse_args()
 
     # 比較する組 ( 正解, 比較先 ) を作る
@@ -355,7 +395,7 @@ def main() -> None:
     all_ok = True
     for path_a, path_b in pairs:
         print(f"=== {path_a.name} ===")
-        ok = compare_db(path_a, path_b, args.tol, args.by_content, args.max_ends)
+        ok = compare_db(path_a, path_b, args.tol, args.by_content, args.max_ends, args.common_columns)
         print("一致" if ok else "→ 違いあり")
         all_ok = all_ok and ok
 

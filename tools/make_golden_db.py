@@ -15,12 +15,17 @@ complete_model/ に大会ごとのファインチューニング済みモデル 
     uv run python tools/make_golden_db.py --out db/golden/before
 
     # PDF を個別に指定する ( MD は --md を付ける )
-    uv run python tools/make_golden_db.py --out db/golden/before --pdf C:/ResultsBook/data_4p/WJCC2022_ResultsBook_Men.pdf
-    uv run python tools/make_golden_db.py --out db/golden/before --md --pdf C:/ResultsBook/data_md/WMDCC2016_ResultsBook.pdf
+    uv run python tools/make_golden_db.py --out db/golden/before --pdf <PDF_ROOT>/data_4p/WJCC2022_ResultsBook_Men.pdf
+    uv run python tools/make_golden_db.py --out db/golden/before --md --pdf <PDF_ROOT>/data_md/WMDCC2016_ResultsBook.pdf
 
     # Worker を使わず、解析結果を JSON ファイルに書き出して読み込み直してから DB に書き込む
     # ( 「PDF の解析」と「DB への書き込み」を別々に行う経路の確認用 )
     uv run python tools/make_golden_db.py --out db/golden/after_json --via-json
+
+PDF の置き場所:
+    PRESET を使うときは、Results Book の置き場所 ( data_4p/ と data_md/ がある
+    ディレクトリ ) を環境変数 PDF_ROOT で渡す。リポジトリ直下の .env に書いておけば
+    uv run --env-file .env python tools/make_golden_db.py ... で読み込まれる ( .env.example を参照 ) 。
 """
 import argparse
 import logging
@@ -44,9 +49,6 @@ from worker import Worker  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-# Results Book の置き場所
-PDF_ROOT = Path("C:/ResultsBook")
-
 # 代表的な PDF の組み合わせ ( (相対パス, MD かどうか) ) 。
 # いずれも complete_model/ に学習済みモデルがあり、学習なしで再現できるものを選んでいる。
 PRESET: list[tuple[str, bool]] = [
@@ -61,6 +63,21 @@ PRESET: list[tuple[str, bool]] = [
     ("data_md/WMDCC2026_ResultsBook.pdf", True),       # 新MD形式 ( 事前配置石あり )
     ("data_md/OWG2026_ResultsBook_MD.pdf", True),      # 五輪MD
 ]
+
+
+def get_pdf_root() -> Path:
+    """環境変数 PDF_ROOT から Results Book の置き場所を読む。
+
+    ローカルのパスをコードに書かないよう、既定値は持たせない。設定されていなければ終了する。
+
+    Returns:
+        Results Book の置き場所 ( data_4p/ と data_md/ があるディレクトリ )
+    """
+    value = os.environ.get("PDF_ROOT")
+    if not value:
+        sys.exit("環境変数 PDF_ROOT が設定されていません ( .env.example を参照 ) 。"
+                 "または --pdf で PDF を指定してください。")
+    return Path(value)
 
 
 def make_one(pdf_path: Path, is_md: bool, out_dir: Path, via_json: bool = False) -> Path:
@@ -155,7 +172,8 @@ def main() -> None:
     if args.pdf:
         targets = [(p, args.md) for p in args.pdf]
     else:
-        targets = [(PDF_ROOT / rel, is_md) for rel, is_md in PRESET]
+        pdf_root = get_pdf_root()
+        targets = [(pdf_root / rel, is_md) for rel, is_md in PRESET]
 
     out_dir = args.out if args.out.is_absolute() else REPO_ROOT / args.out
     out_dir.mkdir(parents=True, exist_ok=True)

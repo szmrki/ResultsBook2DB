@@ -8,8 +8,8 @@ cli.py: GUI を使わずに PDF を解析・取り込むためのコマンドラ
 使い方:
     # 1. PDF を解析して、解析結果ファイル ( JSON ) を作る ( DB には触れない )
     #    大会名はファイル名から推測する。MD は --md を付ける
-    uv run python cli.py extract C:/ResultsBook/data_4p/WJCC2026_ResultsBook_Men.pdf --out results
-    uv run python cli.py extract C:/ResultsBook/data_md/WMDCC2026_ResultsBook.pdf --out results --md
+    uv run python cli.py extract path/to/WJCC2026_ResultsBook_Men.pdf --out results
+    uv run python cli.py extract path/to/WMDCC2026_ResultsBook.pdf --out results --md
 
     # 2. 解析結果ファイルを DB に取り込む ( DB が無ければ作る )
     uv run python cli.py ingest results/WJCC2026Men.json --db db/four.db
