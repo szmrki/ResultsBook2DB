@@ -70,6 +70,8 @@ MAX_STONES = 16          #1枚の図から返すストーンの最大数
 #塗りの割合を調べる円 ( 中が 1、外が 0 )
 _fill_y, _fill_x = np.mgrid[-FILL_CHECK_RADIUS:FILL_CHECK_RADIUS + 1, -FILL_CHECK_RADIUS:FILL_CHECK_RADIUS + 1]
 FILL_DISC = (_fill_x ** 2 + _fill_y ** 2 <= FILL_CHECK_RADIUS ** 2).astype(np.float32)
+#円の中の塗りの割合が FILL_RATIO_MIN 以上になるのに必要な、塗りの画素数の最小値 ( 113画素の円なら 85 )
+FILL_MIN_PIXELS = int(np.ceil(FILL_RATIO_MIN * FILL_DISC.sum()))
 
 def __flip_by_white(img: np.ndarray) -> bool | None:
     """
@@ -339,6 +341,10 @@ def __complete_missing_stones(img: np.ndarray, stones: list[tuple[int, float, fl
 
     #2. 残った塗りから、ストーン1個ぶんのかたまりを探す
     for cls_id in (CLS_RED, CLS_YELLOW):
+        #円の中の塗りの割合が FILL_RATIO_MIN に届くには、塗りの画素が FILL_MIN_PIXELS 以上要る。
+        #残りの塗りが画像全体でそれより少なければ補完は起こらないので、重い畳み込みを省く
+        if cv2.countNonZero(masks[cls_id]) < FILL_MIN_PIXELS:
+            continue
         #各画素を中心とする円の中の塗りの割合を、画像全体でまとめて求める
         ratio_map = cv2.filter2D(masks[cls_id].astype(np.float32), -1, FILL_DISC / FILL_DISC.sum(),
                                  borderType=cv2.BORDER_CONSTANT)
