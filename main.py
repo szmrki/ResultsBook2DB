@@ -739,6 +739,36 @@ class MainWindow(QMainWindow):
         
         logger.info(f"残りファイル数: {len(self.file_entries)}")
 
+    def _confirm_start(self, db_path: Path) -> bool:
+        """
+            解析を始めてよいかを確認する画面を出す
+
+            ファイル一覧は件数が多いと画面に収まらないため、本文には件数だけを書き、
+            一覧は「詳細の表示」で開く欄 ( setDetailedText ) に入れる。
+
+            Args:
+                db_path: 書き込み先のデータベースのパス
+
+            Returns:
+                OK が押されたら True、キャンセル・閉じるボタンなら False
+        """
+        file_list_text = "\n".join(
+            f"{e['path'].name} → {e['event_name']}" for e in self.file_entries
+        )
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("確認")
+        box.setText(
+            f"以下の情報で解析を開始しますか？\n\n"
+            f"ファイル: {len(self.file_entries)}件\n"
+            f"データベース: {db_path.name}\n"
+            f"形式: {'MD' if self.md_btn_group.checkedId() == 1 else '4人制'}"
+        )
+        box.setDetailedText(file_list_text)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Ok)
+        return box.exec() == QMessageBox.StandardButton.Ok
+
     def start_analysis(self) -> None:
         """
             解析開始ボタンが押されたときの処理
@@ -766,10 +796,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "エラー", "データベースの設定が完了していません。\nパスまたはファイル名を入力してください。")
             return
 
+        # 新規作成する DB は、確認画面で OK が押されてから作る ( キャンセル時に空の DB を残さないため )
+        create_new_db = False
         if is_new:
             # 既に同名ファイルがあるかチェックする
             if db_path.exists():
-                ret = QMessageBox.question(self, "上書き確認", 
+                ret = QMessageBox.question(self, "上書き確認",
                     f"ファイルが既に存在します。\n追記しますか？\n{str(db_path)}",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                 if ret == QMessageBox.StandardButton.No:
@@ -777,26 +809,19 @@ class MainWindow(QMainWindow):
                 else:
                     logger.info(f"既存接続モード: {db_path}")
             else:
-                logger.info(f"新規作成モード: {db_path}")
-                set_tables(str(db_path), is_md=self.is_md)
+                create_new_db = True
         else:
             logger.info(f"既存接続モード: {db_path}")
 
         # -------------------------------------------------------
         # ここでバックグラウンド処理(QThread)を開始
         # -------------------------------------------------------
-        file_list_text = "\n".join(
-            [f"  {e['path'].name} → {e['event_name']}" for e in self.file_entries]
-        )
-        ret_start = QMessageBox.question(self, "確認", 
-            f"以下の情報で解析を開始しますか？\n\n"
-            f"ファイル ({len(self.file_entries)}件):\n{file_list_text}\n\n"
-            f"データベース: {db_path.name}\n"
-            f"形式: {'MD' if self.md_btn_group.checkedId() == 1 else '4人制'}",
-            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
-        )
-        if ret_start == QMessageBox.StandardButton.Cancel:
+        if not self._confirm_start(db_path):
             return
+
+        if create_new_db:
+            logger.info(f"新規作成モード: {db_path}")
+            set_tables(str(db_path), is_md=self.is_md)
 
         # 2. UIを「処理中モード」にする
         self.set_ui_locked(True)
