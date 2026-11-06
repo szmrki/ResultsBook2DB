@@ -60,7 +60,8 @@ StopCallback = Callable[[], bool]
 # 解析結果ファイル ( JSON ) の形式のバージョン。形式を変えたら上げる
 #   1 : 最初の形式
 #   2 : MD の事前配置石を、通常の石と同じ項目 ( 距離・ハウス内・シート内 ) で持つようにした ( issue #15 )
-#   3 : LSD の回転 ( turn ) と、試合の日付・開始時刻・ステージ・シート・グループを持つようにした ( issue #32 / #30 )
+#   3 : LSD の回転 ( turn ) 、試合の日付・開始時刻・ステージ・シート・グループ、投球の注記 ( notes ) を
+#       持つようにした ( issue #32 / #30 / #35 )
 RESULT_FORMAT_VERSION = 3
 
 
@@ -89,6 +90,7 @@ class ShotResult:
     type: str | None
     turn: str | None
     percent_score: Any
+    notes: str | None = None  # 図の下の注記 ( 例: 'Time-out' ) 。pdf_tools.__read_shot_notes を参照
     stones: list[StoneResult] = field(default_factory=list)
 
 
@@ -405,9 +407,10 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
                     if info is not None: #正常時
                         shot_type = info["type"]; percent_score = info["score"]
                         turn = info["turn"]; team = info["team"]; player_name = info["player"]
+                        notes = info["notes"]
                     else: #ショット情報が取れない場合はNULLとし、ストーン配置のみ保存する
                         shot_type = None; percent_score = None
-                        turn = None; team = None; player_name = None
+                        turn = None; team = None; player_name = None; notes = None
                         logger.warning(f"[{game_context}] End {num_end} - Shot {shot_num} - Shot info not found")
 
                     try:
@@ -416,7 +419,7 @@ def extract_event(pdf_path: str | Path, event_name: str, is_md: bool,
                         logger.warning(f"[{game_context}] End {num_end} - Shot {shot_num} - Shot color not found")
                         shot_color = None
                     shot = ShotResult(number=shot_num, color=shot_color, team=team, player_name=player_name,
-                                      type=shot_type, turn=turn, percent_score=percent_score)
+                                      type=shot_type, turn=turn, percent_score=percent_score, notes=notes)
 
                     if stones is not None: #正常時
                         # insheet フラグが立っている行のみ石として保持する
@@ -683,9 +686,9 @@ def write_event(conn: sqlite3.Connection, result: EventResult) -> tuple[int, dic
 
             for shot in end.shots:
                 cur.execute("""INSERT INTO shots(end_id, number, color, team, player_name,
-                                    type, turn, percent_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                                    type, turn, percent_score, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                                     (end_id, shot.number, shot.color, shot.team, shot.player_name,
-                                    shot.type, shot.turn, shot.percent_score))
+                                    shot.type, shot.turn, shot.percent_score, shot.notes))
                 shot_id = cur.lastrowid #shot_idを取得
 
                 rows = [(shot_id, s.color, s.x, s.y, s.distance_from_center, s.inhouse, s.insheet)

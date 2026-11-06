@@ -45,9 +45,12 @@ def set_tables(dbname: str | Path, is_md: bool = False) -> None:
                 number INTEGER, color_hammer STRING, score_red INTEGER, score_yellow INTEGER,
                 FOREIGN KEY(game_id) REFERENCES games(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
             )
+        # notes: 図の下の注記 ( 例: 'Time-out' / 'No-Tick Zone violation' ) 。無ければ NULL。
+        #        表記ゆれ ( 大文字小文字・ハイフン・空白 ) だけ揃え、複数の注記の区切りは書かれたまま
         cur.execute(
             '''CREATE TABLE shots(id INTEGER PRIMARY KEY AUTOINCREMENT, end_id INTEGER NOT NULL, number INTEGER,
             color STRING, team STRING, player_name STRING, type STRING, turn STRING, percent_score INTEGER,
+            notes STRING,
             FOREIGN KEY(end_id) REFERENCES ends(id) ON DELETE CASCADE ON UPDATE CASCADE)'''
         )
         cur.execute(

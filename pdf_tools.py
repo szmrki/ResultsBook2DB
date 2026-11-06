@@ -224,7 +224,7 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
             all_texts : ショットバイショットのすべてのテキスト情報のリスト
         Returns:
             list[dict[str, str | int | None]] :
-                (チーム名, プレイヤー名, ショットタイプ, 回転方向, ショットスコア)の辞書のリスト
+                (チーム名, プレイヤー名, ショットタイプ, 回転方向, ショットスコア, 注記)の辞書のリスト
     """
     score_pattern = re.compile(r"^\d+%$|^-$")
     turn_pattern = ("↺", "↻")
@@ -267,6 +267,7 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
                     "turn": turn,
                     "team": team,
                     "player": player,
+                    "notes": __read_shot_notes(all_texts, i + 4),
                 })
                 i += 4
                 continue
@@ -282,6 +283,7 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
                     "turn": __convert_old_turn(turn),
                     "team": team,
                     "player": player,
+                    "notes": __read_shot_notes(all_texts, i + 4),
                 })
                 i += 4
                 continue
@@ -297,6 +299,7 @@ def __get_shot_info(all_texts: list[str]) -> list[dict[str, str | int | None]]:
                 "turn": None,  # 欠損扱い
                 "team": team,
                 "player": player,
+                "notes": __read_shot_notes(all_texts, i + 3),
             })
             i += 3
             continue
@@ -359,6 +362,80 @@ def __normalize_shot_type(shot_type: str) -> str:
             str : 表記を揃えた種別
     """
     return _SHOT_TYPE_ALIASES.get(shot_type, shot_type)
+
+
+# ─── 投球ごとの注記 ( issue #35 ) ─────────────────────────────────────────────
+# 注記 ( "Time-out" / "No-Tick Zone violation" など ) は、どの書式でも選手の行のすぐ後ろ、
+# 次の投球番号の行より前に書かれている ( 全 109 冊で確認 ) 。
+
+# 注記の表記ゆれ → 揃えた表記。大文字小文字・ハイフン・空白の違いだけを揃える。
+# 意味の違うもの ( "Hog line violation" = リリースの違反 と "Did not pass the hog line" ) や
+# 言葉の違うもの ( "Played out of ( proper ) rotation" ) は揃えない。
+_NOTE_ALIASES = {
+    "Did not pass the hogline": "Did not pass the hog line",  # 2022〜2026年
+    "Hogline violation": "Hog line violation",              # 2010〜2026年
+    "Free guard zone": "Free Guard Zone",                   # 2006〜2026年
+    "No tick zone": "No-Tick Zone",                         # 2022〜2026年
+    "picked up debris": "Picked up debris",                 # 2006〜2026年 ( 揃える先は 2025年〜の表記 )
+    "burned stone": "Burned stone",                         # 同上
+    "Slow Take-Out": "Slow Take-out",                       # 2006〜2014年
+    "Slow Takeout": "Slow Take-out",                        # 2014〜2017年
+    "measurement": "Measurement",                           # OWG2014
+    "Time Out": "Time-out",                                 # 2019年
+    "Stone re-played": "Stone replayed",                    # 2018年
+    "Soft-Peeling": "Soft Peeling",                         # 種別 "Wick / Soft Peeling" のつづりに合わせる
+}
+# 注記の後ろに続く、注記ではない行の始まり ( ここで読むのをやめる )
+#   古い書式では、ページ最後の投球の後ろに投球番号が無く、次のものが続く:
+#   得点欄の国コード ( "SUI" ) と時刻、凡例 ( "NOTE" / "Points:" / "4 =" / "100%" ) 、
+#   OWG2006 の残り時間 ( "Time left: FIN 64:52, CAN 66:25" ) 、ファイル番号とフッター
+_NOTE_STOP_RE = re.compile(
+    r"^(?:[A-Z]{3}$|[A-Z]{3}: |[A-Z]{3} - |NOTES?$|Note:$|Points:$|\d+ =$|\d+%$|\d+:\d+|Time left"
+    r"|CU[A-Z0-9_\-]+ |Page \d+/\d+|Report Created|End$|End \d)")
+# 1 投分の注記として読む最大の行数 ( 注記は長くても 2 行 )
+_NOTE_MAX_LINES = 4
+
+
+def __read_shot_notes(all_texts: list[str], start: int) -> str | None:
+    """
+        選手の行の後ろから、その投球の注記を読む
+
+        次の投球番号 ( 数字だけの行 ) か、注記ではない行 ( _NOTE_STOP_RE ) の手前までを注記とする。
+        - 2 行に折り返された注記はつなげる ( ";" / "," で始まる行は空白を入れずにつなぐ )
+        - 1 行目の先頭の 1 文字の断片 ( 長い選手名の折り返し。"f" / "t; Time-out" など ) は取り除く
+        - OWG2006 の残り時間が同じ行につながっている場合 ( "Split Time left: ..." ) は、その手前までを使う
+        - "-" だけの行は注記ではないので使わない ( WWCC2025 に 1 件 )
+        - 表記ゆれは _NOTE_ALIASES で揃える。複数の注記の区切り ( "; " / ", " / 空白 ) は書かれたまま残す
+
+        Args:
+            all_texts : Shot by Shot のページのテキストを行に分けたもの
+            start : 選手の行の次の行の位置
+        Returns:
+            str | None : 注記。無ければ None
+    """
+    lines: list[str] = []
+    for line in all_texts[start:start + _NOTE_MAX_LINES]:
+        line = line.strip()
+        if not line:
+            continue
+        if line.isdigit() or _NOTE_STOP_RE.match(line):
+            break
+        if "Time left" in line:
+            lines.append(line.split("Time left")[0].strip().rstrip("|").strip())
+            break
+        lines.append(line)
+
+    if lines:
+        lines[0] = re.sub(r"^.(?=$|[ ;,])", "", lines[0]).strip()
+    notes = ""
+    for line in lines:
+        if not line or line == "-":
+            continue
+        notes += line if not notes or line[0] in ";," else " " + line
+    for alias, canonical in _NOTE_ALIASES.items():
+        notes = notes.replace(alias, canonical)
+    notes = notes.lstrip(";, ")
+    return notes or None
 
 def save_images(doc: fitz.Document, output_dir: Path, save_num: int) -> int:
     """

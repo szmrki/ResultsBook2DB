@@ -157,6 +157,7 @@ SQLite データベース (`.db`) は以下のテーブルで構成されてい�
 | `type` | ショットの種類 |
 | `turn` | 回転方向 (cw, ccw) |
 | `percent_score` | ショットスコア(0, 25, 50, 75, 100) |
+| `notes` | 図の下の注記 (例: `Time-out`, `No-Tick Zone violation`, `Slow Take-out`) |
 
 ### `stones` (ストーン配置情報)
 
